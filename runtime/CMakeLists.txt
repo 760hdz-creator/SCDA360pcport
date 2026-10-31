@@ -30,12 +30,34 @@ endif()
 # This build's version (F1 menu > Update compares it with the latest GitHub release of SCDA_UPDATE_REPO).
 set(SCDA_UPDATE_REPO "8gramlabs/SCDA360pcport" CACHE STRING "GitHub owner/name the update check asks")
 
+# SDL3 (zlib): native PlayStation / Switch / other gamepads (src/pad.cpp), linked static so an
+# update that replaces scda.exe alone carries it. Source: external/SDL (github.com/libsdl-org/SDL
+# tag release-3.4.18, unmodified; git clone --depth 1 --branch release-3.4.18
+# https://github.com/libsdl-org/SDL external/SDL). Missing: XInput pads only.
+set(SDL_DIR "${SCDA_ROOT}/external/SDL")
+if(EXISTS "${SDL_DIR}/CMakeLists.txt")
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    foreach(off SDL_AUDIO SDL_VIDEO SDL_GPU SDL_RENDER SDL_CAMERA SDL_POWER SDL_DIALOG SDL_TRAY
+            SDL_TESTS SDL_TEST_LIBRARY SDL_EXAMPLES SDL_INSTALL SDL_UNINSTALL)
+        set(${off} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    add_subdirectory("${SDL_DIR}" "${CMAKE_BINARY_DIR}/SDL" EXCLUDE_FROM_ALL)
+    add_library(scda_sdl INTERFACE)
+    target_link_libraries(scda_sdl INTERFACE SDL3::SDL3-static)
+    target_compile_definitions(scda_sdl INTERFACE SCDA_HAVE_SDL3)
+else()
+    add_library(scda_sdl INTERFACE)
+endif()
+
 # Dear ImGui (MIT, vendored unmodified in thirdparty/imgui): the F1 settings menu.
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/imgui")
 add_library(scda_imgui STATIC "${IMGUI_DIR}/imgui.cpp" "${IMGUI_DIR}/imgui_draw.cpp" "${IMGUI_DIR}/imgui_tables.cpp"
     "${IMGUI_DIR}/imgui_widgets.cpp" "${IMGUI_DIR}/backends/imgui_impl_dx11.cpp" "${IMGUI_DIR}/backends/imgui_impl_win32.cpp")
 target_include_directories(scda_imgui PUBLIC "${IMGUI_DIR}")
 target_compile_options(scda_imgui PRIVATE -w)
+# Its XInput-only gamepad feed is replaced by overlay.cpp's pad.h feed (PlayStation pads too).
+target_compile_definitions(scda_imgui PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 
 # Recompiled PPC code (XenonRecomp output).
 file(GLOB SCDA_PPC_SOURCES "${GENERATED}/ppc_recomp.*.cpp")
@@ -65,6 +87,7 @@ add_executable(scda
     src/xam.cpp
     src/content.cpp
     src/input.cpp
+    src/pad.cpp
     src/profiler.cpp
     src/launch.cpp
     src/guest_time.cpp
@@ -88,17 +111,17 @@ add_executable(scda
     src/imports_stubs.cpp
     scda.rc)
 target_include_directories(scda PRIVATE include src)
-target_link_libraries(scda PRIVATE scda_ppc scda_imgui winhttp shell32 bcrypt dbghelp winmm d3d11 dxgi d3dcompiler xinput synchronization xaudio2 scda_xma)
+target_link_libraries(scda PRIVATE scda_ppc scda_imgui scda_sdl winhttp shell32 bcrypt dbghelp winmm d3d11 dxgi d3dcompiler xinput synchronization xaudio2 scda_xma)
 # Recompiled code runs on the host stack; the main guest thread recurses deeply.
 target_link_options(scda PRIVATE /STACK:0x4000000)
 target_compile_definitions(scda PRIVATE SCDA_EXPECTED_IMAGE_SHA256="${SCDA_EXPECTED_IMAGE_SHA256}" NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 
 # Tests: ctest --test-dir runtime/build
 enable_testing()
-add_executable(scda_tests tests/test_main.cpp tests/test_stfs.cpp tests/test_loader.cpp tests/test_watchdog.cpp tests/test_import_stub.cpp tests/test_video.cpp tests/test_pm4.cpp tests/test_command_processor.cpp tests/test_interrupts.cpp tests/test_fs.cpp tests/test_audio.cpp tests/test_xma.cpp tests/xma_fake_decoder.c tests/test_alloc_tracker.cpp tests/test_memory.cpp tests/test_module.cpp tests/test_thread_context.cpp tests/test_xam.cpp tests/test_time.cpp tests/test_shader_cache.cpp tests/test_draw.cpp tests/test_frame_queue.cpp tests/test_settings.cpp tests/test_d3d11_smoke.cpp tests/test_window_size.cpp tests/test_xenos_container.cpp tests/test_xenos_raw.cpp tests/test_shader_compiler.cpp tests/test_draw_state.cpp tests/test_input.cpp tests/test_launch.cpp tests/test_content.cpp tests/test_updater.cpp src/overlay.cpp src/updater.cpp src/content.cpp src/input.cpp src/launch.cpp src/gpu/draw_state.cpp src/gpu/shader_compiler.cpp src/gpu/xenos/shader_recompiler.cpp src/gpu/xenos/shader_recompiler_raw.cpp src/gpu/xenos/translate.cpp src/settings.cpp src/host_window.cpp src/gpu/d3d11_renderer.cpp src/gpu/shader_cache.cpp src/gpu/draw.cpp src/guest_time.cpp src/thread_context.cpp src/xam.cpp src/kernel.cpp src/memory.cpp src/module.cpp src/fs.cpp src/audio.cpp src/xma.cpp src/interrupts.cpp src/video.cpp src/pm4.cpp src/command_processor.cpp src/loader.cpp src/watchdog.cpp src/import_stub.cpp src/title.cpp "${SCDA_ROOT}/tools/stfs/stfs.cpp")
+add_executable(scda_tests tests/test_main.cpp tests/test_stfs.cpp tests/test_loader.cpp tests/test_watchdog.cpp tests/test_import_stub.cpp tests/test_video.cpp tests/test_pm4.cpp tests/test_command_processor.cpp tests/test_interrupts.cpp tests/test_fs.cpp tests/test_audio.cpp tests/test_xma.cpp tests/xma_fake_decoder.c tests/test_alloc_tracker.cpp tests/test_memory.cpp tests/test_module.cpp tests/test_thread_context.cpp tests/test_xam.cpp tests/test_time.cpp tests/test_shader_cache.cpp tests/test_draw.cpp tests/test_frame_queue.cpp tests/test_settings.cpp tests/test_d3d11_smoke.cpp tests/test_window_size.cpp tests/test_xenos_container.cpp tests/test_xenos_raw.cpp tests/test_shader_compiler.cpp tests/test_draw_state.cpp tests/test_input.cpp tests/test_launch.cpp tests/test_content.cpp tests/test_updater.cpp src/overlay.cpp src/updater.cpp src/content.cpp src/input.cpp src/pad.cpp src/launch.cpp src/gpu/draw_state.cpp src/gpu/shader_compiler.cpp src/gpu/xenos/shader_recompiler.cpp src/gpu/xenos/shader_recompiler_raw.cpp src/gpu/xenos/translate.cpp src/settings.cpp src/host_window.cpp src/gpu/d3d11_renderer.cpp src/gpu/shader_cache.cpp src/gpu/draw.cpp src/guest_time.cpp src/thread_context.cpp src/xam.cpp src/kernel.cpp src/memory.cpp src/module.cpp src/fs.cpp src/audio.cpp src/xma.cpp src/interrupts.cpp src/video.cpp src/pm4.cpp src/command_processor.cpp src/loader.cpp src/watchdog.cpp src/import_stub.cpp src/title.cpp "${SCDA_ROOT}/tools/stfs/stfs.cpp")
 target_include_directories(scda_tests PRIVATE tests include src "${SCDA_ROOT}/tools/stfs" "${GENERATED}" "${XENON_ROOT}/thirdparty/simde")
 target_compile_options(scda_tests PRIVATE /clang:-march=sandybridge)
-target_link_libraries(scda_tests PRIVATE scda_imgui winhttp shell32 bcrypt winmm d3d11 dxgi d3dcompiler xinput xaudio2)
+target_link_libraries(scda_tests PRIVATE scda_imgui scda_sdl winhttp shell32 bcrypt winmm d3d11 dxgi d3dcompiler xinput xaudio2)
 target_compile_definitions(scda_tests PRIVATE SCDA_EXPECTED_IMAGE_SHA256="${SCDA_EXPECTED_IMAGE_SHA256}" SCDA_TESTS SCDA_ROOT="${SCDA_ROOT}" NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 add_test(NAME scda_tests COMMAND scda_tests)
 

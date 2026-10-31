@@ -1,5 +1,5 @@
 // XamInput* and the local profile. Semantics follow Xenia (BSD): one offline profile, signed in
-// locally, in user slot 0; its controller is XInput pad 0 merged with the keyboard (while the game
+// locally, in user slot 0; its controller is pad 0 (pad.h: XInput, else SDL3) merged with the keyboard (while the game
 // window has focus) and SCDA_AUTOPRESS.
 #include <algorithm>
 #include <atomic>
@@ -11,6 +11,7 @@
 #include <string>
 #include <gpu/frame_queue.h>
 #include <input.h>
+#include <pad.h>
 #include <runtime.h>
 #include <settings.h>
 
@@ -221,9 +222,8 @@ SCDA_IMPORT(XamInputGetState)
         return ParseAutoPress(env);
     }();
     static const InputSettings mouse = LoadInputSettings(SettingsPath());
-    XINPUT_STATE pad{};
-    bool connected = XInputGetState(0, &pad) == ERROR_SUCCESS;
-    XINPUT_GAMEPAD g = connected ? pad.Gamepad : XINPUT_GAMEPAD{};
+    XINPUT_GAMEPAD g;
+    bool connected = PadGetState(g);
     int dx, dy, wheel;
     MouseTake(dx, dy, wheel); // drained every poll so unfocused motion never piles up
     // A scripted run ignores the keyboard and mouse, so typing elsewhere cannot leak into it.
@@ -303,8 +303,7 @@ SCDA_IMPORT(XamInputSetState)
         ctx.r3.u64 = kErrorDeviceNotConnected;
         return;
     }
-    XINPUT_VIBRATION v{ GuestLoad16(in), GuestLoad16(in + 2) };
-    XInputSetState(0, &v);
+    PadSetVibration(GuestLoad16(in), GuestLoad16(in + 2));
     ctx.r3.u64 = kErrorSuccess;
 }
 

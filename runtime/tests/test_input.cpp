@@ -3,6 +3,10 @@
 #include <cstring>
 #include <filesystem>
 #include <input.h>
+#include <pad.h>
+#ifdef SCDA_HAVE_SDL3
+#include <SDL3/SDL_gamepad.h>
+#endif
 #include <runtime.h>
 
 extern std::string g_profileDir;
@@ -254,3 +258,32 @@ TEST(menu_close_waits_for_release)
     FilterMenuShortcut(g, false, wait);
     CHECK(!wait && g.wButtons == XINPUT_GAMEPAD_A);
 }
+
+#ifdef SCDA_HAVE_SDL3
+// SDL gamepad (DualSense layout) -> Xbox 360 pad: positional faces, Share/touchpad Back, Y flipped.
+TEST(pad_from_sdl_maps_playstation_layout)
+{
+    bool b[SDL_GAMEPAD_BUTTON_COUNT] = {};
+    int16_t a[SDL_GAMEPAD_AXIS_COUNT] = {};
+    CHECK_EQ(PadFromSdl(b, a).wButtons, uint16_t(0));
+    b[SDL_GAMEPAD_BUTTON_SOUTH] = b[SDL_GAMEPAD_BUTTON_NORTH] = b[SDL_GAMEPAD_BUTTON_START] = true; // Cross, Triangle, Options
+    b[SDL_GAMEPAD_BUTTON_TOUCHPAD] = b[SDL_GAMEPAD_BUTTON_LEFT_STICK] = b[SDL_GAMEPAD_BUTTON_DPAD_LEFT] = true;
+    a[SDL_GAMEPAD_AXIS_LEFTX] = -32768;
+    a[SDL_GAMEPAD_AXIS_LEFTY] = -32768; // up
+    a[SDL_GAMEPAD_AXIS_RIGHTY] = 32767;  // down
+    a[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] = 32767;
+    a[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] = 16384;
+    XINPUT_GAMEPAD g = PadFromSdl(b, a);
+    CHECK_EQ(g.wButtons, uint16_t(XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_Y | XINPUT_GAMEPAD_START | XINPUT_GAMEPAD_BACK |
+        XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_DPAD_LEFT));
+    CHECK_EQ(g.sThumbLX, int16_t(-32768));
+    CHECK_EQ(g.sThumbLY, int16_t(32767));
+    CHECK_EQ(g.sThumbRY, int16_t(-32767));
+    CHECK_EQ(g.bLeftTrigger, uint8_t(255));
+    CHECK_EQ(g.bRightTrigger, uint8_t(128));
+    b[SDL_GAMEPAD_BUTTON_SOUTH] = b[SDL_GAMEPAD_BUTTON_NORTH] = b[SDL_GAMEPAD_BUTTON_START] = false;
+    b[SDL_GAMEPAD_BUTTON_TOUCHPAD] = b[SDL_GAMEPAD_BUTTON_LEFT_STICK] = b[SDL_GAMEPAD_BUTTON_DPAD_LEFT] = false;
+    b[SDL_GAMEPAD_BUTTON_EAST] = b[SDL_GAMEPAD_BUTTON_WEST] = b[SDL_GAMEPAD_BUTTON_BACK] = true; // Circle, Square, Create
+    CHECK_EQ(PadFromSdl(b, a).wButtons, uint16_t(XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_BACK));
+}
+#endif
