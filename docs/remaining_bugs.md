@@ -3,6 +3,17 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
+## OPEN. NY Statue of Liberty pedestal dimmer than the 360 (2026-10-31)
+
+- **Symptom:** floodlit pedestal ~30% darker and less golden than the 360 playthrough (ours top-20% pixels
+  108,101,89 vs 148-173,133-155,106-121); sky and HUD match within a few levels, so exposure is not the cause.
+- **Repro:** `SCDA_LAUNCH_DATA=_run/maps/10_newyork_02.launch SCDA_AUTOPRESS=1130:RX=-1:10`, dump frame 1150.
+- **Evidence:** `SCDA_PIXEL_WATCH=1150,1240,70` (logs every draw changing that guest pixel): the scene value
+  (0.48, 0.49, 0.34) comes from one material pass, PS 63053924 (point lights with cube attenuation maps, now bound);
+  the additive light pass after it (PS b5409fb6, ONE/ONE) adds ~0.017. Then tonemap (e54f8aac) and bloom (a5d8b762).
+- **Next:** trace PS 63053924's light constants on the pedestal draw (`SCDA_TRACE_PS=630539246fe9a5e3`) and its
+  texture inputs; compare bloom strength. The camera drifts between runs, so pick the pixel per run.
+
 ## FIXED. Black reflections on water, glass, metal and shiny floors (2026-10-31)
 
 - **Symptom:** dull/grey water (NY boat), window glass without its reflection layer (Cozumel cabin), flat metal.

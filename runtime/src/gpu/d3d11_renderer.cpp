@@ -1892,6 +1892,63 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     else
         m_context->Draw(d.indexCount, 0);
     m_lastDrawn++;
+    // SCDA_PIXEL_WATCH=<frame>,<x>,<y>: in that presented frame, after every draw, read RT0 at guest
+    // window pixel (x, y) (window offset and MSAA/scale applied) and log the draw when it changed.
+    static const char* watch = getenv("SCDA_PIXEL_WATCH");
+    static unsigned long long watchFrame = 0;
+    static int watchX = 0, watchY = 0;
+    static const bool watchParsed = watch && sscanf(watch, "%llu,%d,%d", &watchFrame, &watchX, &watchY) == 3;
+    if (watchParsed && m_presented == watchFrame && r.last && r.last->texture)
+    {
+        const uint32_t wo = r.regs[kRegPaScWindowOffset];
+        const bool useOffset = (r.regs[0x2205] >> 16) & 1;
+        const int ox = useOffset ? int32_t(wo << 17) >> 17 : 0, oy = useOffset ? int32_t(wo << 1) >> 17 : 0;
+        const int hx = (watchX + ox) * int(r.lastLayout.samplesX * r.scale), hy = (watchY + oy) * int(r.lastLayout.samplesY * r.scale);
+        D3D11_TEXTURE2D_DESC td;
+        r.last->texture->GetDesc(&td);
+        static std::unordered_map<uint32_t, ComPtr<ID3D11Texture2D>> staging;
+        static uint64_t lastValue = ~0ull;
+        if (hx >= 0 && hy >= 0 && uint32_t(hx) < td.Width && uint32_t(hy) < td.Height)
+        {
+            auto& st = staging[td.Format];
+            if (!st)
+            {
+                D3D11_TEXTURE2D_DESC sd{};
+                sd.Width = sd.Height = sd.MipLevels = sd.ArraySize = 1;
+                sd.Format = td.Format;
+                sd.SampleDesc.Count = 1;
+                sd.Usage = D3D11_USAGE_STAGING;
+                sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                m_device->CreateTexture2D(&sd, nullptr, &st);
+            }
+            D3D11_BOX box{ UINT(hx), UINT(hy), 0, UINT(hx + 1), UINT(hy + 1), 1 };
+            D3D11_MAPPED_SUBRESOURCE map;
+            if (st)
+            {
+                m_context->CopySubresourceRegion(st.Get(), 0, 0, 0, 0, r.last->texture.Get(), 0, &box);
+                if (SUCCEEDED(m_context->Map(st.Get(), 0, D3D11_MAP_READ, 0, &map)))
+                {
+                    uint64_t v = 0;
+                    memcpy(&v, map.pData, td.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4);
+                    m_context->Unmap(st.Get(), 0);
+                    if (v != lastValue)
+                    {
+                        float c[4] = {};
+                        if (td.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+                            for (int i = 0; i < 4; i++)
+                                c[i] = HalfToFloat(uint32_t(v >> (16 * i)) & 0xFFFF);
+                        else
+                            for (int i = 0; i < 4; i++)
+                                c[i] = float((v >> (8 * i)) & 0xFF) / 255.0f;
+                        RuntimeLog("[pixel] draw %u vs %016llx ps %016llx rt %08X/%08X blend %08X fmt %u -> %.3f %.3f %.3f %.3f\n",
+                            m_lastDrawn + m_lastSkipped - 1, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
+                            r.regs[kRegRbColorInfo], r.regs[0x2201], uint32_t(td.Format), c[0], c[1], c[2], c[3]);
+                        lastValue = v;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // EDRAM resolve: copy the source surface to the host texture for the destination, then clear it.
