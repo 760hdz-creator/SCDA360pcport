@@ -96,9 +96,12 @@ Evidence paths under `_run/` are local only (git-ignored).
   the window-grid light pattern (`_run/jtex/s13.png`). The cookie s5 (04C46000) really is a round spot. The
   material scales the shadowed light by `min(mask.B + s13.ch, mask.A)`, so the baked pattern shows only where
   mask.B is ~0. With B = 1 (our clear alpha) every baked shadow is swamped, on every map.
-  So the console baseline B is probably 0. Kinshasa's ground then needs another source: its 363 draws
-  bind the default black s13 (036FA000). Next suspect: missing lightmaps (the title binds the default when a
-  lightmap is not loaded/streamed). Check which Kinshasa ground draws should have a real s13.
+  So the console baseline B is probably 0, yet Kinshasa needs B ~1: with B = 0 its car and Sam (dynamic
+  actors, never lightmapped) lose the sun too, so missing lightmaps cannot explain it.
+- **oT8 term ruled out:** `r1.w` also adds `2 * oT8.x` (c253.w = 2). VS c47defcd sets oT8 = `-abs(x) > c255.w`
+  (always 0) when b7 is off. The corpus has 81 `-abs(x) > 0.0` and 9 `abs(x) >= 0.0` (constant results), which
+  looked like a decode bug, but an independent decoder agrees (temp reg bit 7 = abs, negate after abs = -|x|,
+  scalar SGT = src > 0). Decode matches, so oT8.x = 0 on Kinshasa.
   `SCDA_QUERY_ALL_VISIBLE=1` (all occlusion queries visible) changed nothing on Jail.
 - **Ruled out:** negative light alpha (PS b5531808 outputs `0.111 * sum(shadow tests * c2.y * cookie)` >= 0,
   c2 = (0, .8, 0, 0), so the unclamped-source idea does not apply). Alias off (`SCDA_NO_DEPTH_COLOR_ALIAS=1`)
