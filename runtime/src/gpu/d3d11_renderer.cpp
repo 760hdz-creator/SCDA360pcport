@@ -962,6 +962,13 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     if (zeroColor) // the blend factor (AliasedClearColor) whatever the PS returns (zeroPs returns 1)
     {
         AliasedClearColor(regs, b.factor);
+        // A non-zero clear fills the whole host target: the title's quad stops a few rows short of
+        // the 640x360 light mask's bottom (rows ~356+), which on the console keep other surfaces'
+        // EDRAM bits but here stayed 0 = shadow: a dark band over the last 16 screen rows (NY boat,
+        // Hotel). shortcut: the zero clears keep the quad's extent. SCDA_ALIAS_QUAD_ONLY=1: A/B.
+        static const bool quadOnly = getenv("SCDA_ALIAS_QUAD_ONLY") != nullptr;
+        if (!quadOnly && rtvs[0] && (b.factor[0] || b.factor[1] || b.factor[2] || b.factor[3]))
+            m_context->ClearRenderTargetView(rtvs[0], b.factor);
         b.enable = true;
         b.src = b.srcAlpha = D3D11_BLEND_BLEND_FACTOR;
         b.dst = b.dstAlpha = D3D11_BLEND_ZERO;
