@@ -12,6 +12,22 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** Xenia's fields; translator v17. `SCDA_VFETCH_OLD_SIGN=1` restores the old decode (A/B). Verified
   `_run/kv3/` vs `_run/kv/` (same autopress view).
 
+## FIXED. CleanGoggles: EMF/thermal image shifted, smeared bands at the screen edges (2026-10-31)
+
+- **Symptom:** with `CleanGoggles=1`, EMF showed horizontal streaks over the left ~8% and bottom of the screen, a
+  blotchy marble pattern over everything; thermal a band at one edge. Night vision was clean.
+- **Cause:** the UV-noise passes (PS 40f6f3d3, EMF composite PS e8999e85) add `noise.xy (0..1) x PS c20` to the
+  scene UV; the VS (f7f281d7) pre-subtracts the noise mean in VS c20.zw (EMF: VS c20 = (1, -1, -0.1, 1.1), PS c20 =
+  (0.2, 0, 0, -0.2)). CleanGoggles zeroed PS c20, so the image moved 0.1 screen and the clamped edge smeared. The
+  marble pattern is an additive (ONE/ONE) 128x128 DXT1 texture through VS ee247e0c + PS e48aa6f4 (a second use of
+  the overlay PS, not matched by the scanline skip).
+- **Fix:** each noise fetch (slot 0 of both passes, slot 0 of the marble overlay, slot 1 of the thermal palette)
+  gets a 1x1 texture of its average colour: displacement = its mean (cancelled by the VS), tints kept, no grain.
+  Authentic mode unchanged. Verified Intro EMF 2700 / thermal 2900 / NV 3300 (`_run/blk/e/` clean, `_run/blk/g/`
+  authentic). `SCDA_TRACE_PS` now also logs PS c20-c23.
+- **Not a bug:** the flat magenta panel at the right of the thermal view is Osprey wall geometry (PS 626ba45b); it is
+  in authentic mode and EMF too.
+
 ## NOT A BUG. Dark interiors darker than the 360 playthrough (Jail cell) (2026-10-31)
 
 - **Evidence (frame means, 640x360, ours vs 360 video):** Jail cell 13,15,15 vs 19-20,26-27,24-25; Kinshasa00 room

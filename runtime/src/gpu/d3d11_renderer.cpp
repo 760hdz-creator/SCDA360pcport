@@ -1504,14 +1504,20 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     // Goggle vision modes (SC:DA shaders, found by tracing night vision / thermal / EMF frames
     // against goggles-off ones): after each mode's composite a full-screen quad (VS b1b1d377, PS
     // e48aa6f4 = texture x c0) lays a 128x128 DXT1 scanline texture over the screen; goggles-off
-    // frames use that VS with another PS only. Thermal and EMF also run PS 40f6f3d3, which offsets
-    // the scene UV by a noise texture times PS c20 (2x2). Thermal's palette pass (PS 7439e53c)
+    // frames use that VS with another PS only. Thermal and EMF also run PS 40f6f3d3, and EMF's
+    // composite PS e8999e85, which offset the scene UV by a noise texture (slot 0, unsigned) times
+    // PS c20 (2x2). The VS (f7f281d7, VS c20.zw) pre-subtracts the noise mean: EMF VS c20 =
+    // (1, -1, -0.1, 1.1) with PS c20 = (0.2, 0, 0, -0.2), so zeroing PS c20 shifted the whole image
+    // by 0.1 and the clamped edge smeared into bands. Thermal's palette pass (PS 7439e53c)
     // multiplies the palette colour by a screen-tiled noise texture (fetch slot 1, no mips).
-    // CleanGoggles skips the overlay, zeroes c20 for the displacement pass and gives the thermal
-    // palette pass a 1x1 texture of the noise's average colour (same brightness, no grain).
+    // CleanGoggles skips the overlay and gives each noise fetch a 1x1 texture of the noise's
+    // average colour: the displacement becomes its mean (cancelled by the VS), the palette keeps
+    // its brightness, no grain. EMF also adds (ONE/ONE) a 128x128 DXT1 marble texture through VS
+    // ee247e0c + the overlay PS: it gets the average too (keeps the blue tint, no blotches).
     // SCDA_CLEAN_GOGGLES=1 forces it on.
     constexpr uint64_t kGoggleOverlayVs = 0xb1b1d377476e298bull, kGoggleOverlayPs = 0xe48aa6f498700bf1ull;
-    constexpr uint64_t kGoggleNoisePs = 0x40f6f3d3c2f9b7e6ull, kThermalPalettePs = 0x7439e53c553bfde7ull;
+    constexpr uint64_t kGoggleNoisePs = 0x40f6f3d3c2f9b7e6ull, kEmfCompositePs = 0xe8999e85bde3f239ull;
+    constexpr uint64_t kThermalPalettePs = 0x7439e53c553bfde7ull, kEmfOverlayVs = 0xee247e0c1b3eb19cull;
     static const bool cleanEnv = getenv("SCDA_CLEAN_GOGGLES") != nullptr;
     const bool clean = m_cleanGoggles || cleanEnv;
     // Sniper scope: the last post pass (PS 3a7a1a91) blends the 640x360 light mask over the bottom
@@ -1524,11 +1530,13 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     const bool skipped = (d.ps && d.ps->hash == kScopeBandPs && !keepScopeBand) || (d.vs && d.ps &&
         std::find_if(skipShaders.begin(), skipShaders.end(), [&](uint64_t h) { return h == d.vs->hash || h == d.ps->hash; }) != skipShaders.end()) ||
         (clean && d.vs && d.ps && d.vs->hash == kGoggleOverlayVs && d.ps->hash == kGoggleOverlayPs);
-    // PS constant to zero for this draw (component mask), 0 = none.
-    uint32_t noiseConst = 0, noiseMask = 0;
-    if (clean && d.ps && d.ps->hash == kGoggleNoisePs)
-        noiseConst = 20, noiseMask = 0xF;
-    const bool zeroNoise = noiseMask != 0;
+    // Fetch slot to replace by its 1x1 average, -1 = none.
+    int averageSlot = -1;
+    if (clean && d.ps && (d.ps->hash == kGoggleNoisePs || d.ps->hash == kEmfCompositePs ||
+        (d.vs && d.vs->hash == kEmfOverlayVs && d.ps->hash == kGoggleOverlayPs)))
+        averageSlot = 0;
+    else if (clean && d.ps && d.ps->hash == kThermalPalettePs)
+        averageSlot = 1;
     if (skipped || !topology || !d.vs || !d.ps || d.source == IndexSource::Immediate || (rectList && !r.rectListGs))
     {
         // SCDA_TRACE_SKIP=1: each distinct (reason, primitive, source, shaders) skip once.
@@ -1570,7 +1578,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         }();
         const bool tracePs = std::find(tracePsList.begin(), tracePsList.end(), d.ps->hash) != tracePsList.end();
         if (tracePs)
-            for (uint32_t c = 0; c < 8; c++)
+            for (uint32_t c = 0; c < 24; c = c == 7 ? 20 : c + 1) // c0-c7, c20-c23
             {
                 auto f = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + 1024 + c * 4 + i]); };
                 RuntimeLog("[rtrace]   ps c%u %g %g %g %g blend %08X\n", c, f(0), f(1), f(2), f(3), r.regs[0x2201]);
@@ -1737,42 +1745,22 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         return;
     }
     const uint32_t texSlots = ShaderTextureFetchSlots(*d.vs) | ShaderTextureFetchSlots(*d.ps);
-    // CleanGoggles: the noise weights = 0 for this draw only (restored after the bind).
-    const uint32_t kNoiseConst = kRegAluConstants + 1024 + noiseConst * 4;
-    uint32_t savedNoise[4] = {};
-    if (zeroNoise)
-    {
-        for (uint32_t i = 0; i < 4; i++)
-        {
-            savedNoise[i] = r.regs[kNoiseConst + i];
-            if (noiseMask >> i & 1)
-                r.regs.Set(kNoiseConst + i, 0);
-        }
-        r.aluDirty[1] = true;
-        r.stateDirty = true;
-    }
     if (r.stateDirty || (texSlots & ~r.lastTexSlots))
     {
         r.lastTexSlots = r.stateDirty ? texSlots : r.lastTexSlots | texSlots;
         BindRegisterState(r.regs, r.lastTexSlots);
         r.stateDirty = false;
     }
-    if (zeroNoise)
+    if (averageSlot >= 0)
     {
-        for (uint32_t i = 0; i < 4; i++)
-            r.regs.Set(kNoiseConst + i, savedNoise[i]);
-        r.aluDirty[1] = true;
-        r.stateDirty = true; // the next draw uploads the real constants
-    }
-    if (clean && d.ps->hash == kThermalPalettePs)
-    {
-        const TextureFetch t = DecodeTextureFetch(r.regs, 1);
+        const TextureFetch t = DecodeTextureFetch(r.regs, uint32_t(averageSlot));
         auto& avg = r.averageTextures[t.physical | uint64_t(t.format) << 32];
         if (!avg && t.valid && TextureElementBytes(t.format))
         {
             const uint8_t* guest = PhysicalPtr(t.physical);
             uint64_t sum[4] = {};
-            uint32_t mean = 0xFFFFFFFF;
+            uint32_t mean = 0;
+            bool have = false;
             if (GuestRangeReadable(guest, TextureGuestBytes(t)))
             {
                 const std::vector<uint32_t> texels = ConvertTexture(t, guest);
@@ -1781,7 +1769,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         sum[c] += (v >> (8 * c)) & 0xFF;
                 if (!texels.empty())
                 {
-                    mean = 0;
+                    have = true;
                     for (uint32_t c = 0; c < 4; c++)
                         mean |= uint32_t((sum[c] + texels.size() / 2) / texels.size()) << (8 * c);
                 }
@@ -1793,13 +1781,14 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             D3D11_SUBRESOURCE_DATA init{ &mean, 4, 4 };
             ComPtr<ID3D11Texture2D> tex;
-            if (SUCCEEDED(m_device->CreateTexture2D(&td, &init, &tex)))
+            // Unreadable noise: keep the title's texture (an opaque white mean would shift the image).
+            if (have && SUCCEEDED(m_device->CreateTexture2D(&td, &init, &tex)))
                 m_device->CreateShaderResourceView(tex.Get(), nullptr, &avg);
         }
         if (avg)
         {
             ID3D11ShaderResourceView* srv = avg.Get();
-            m_context->PSSetShaderResources(kHlslTex2DSlot + 1, 1, &srv);
+            m_context->PSSetShaderResources(kHlslTex2DSlot + averageSlot, 1, &srv);
             r.stateDirty = true; // the next draw rebinds the guest textures
         }
     }
