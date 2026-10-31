@@ -1943,6 +1943,8 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         RuntimeLog("[pixel] draw %u vs %016llx ps %016llx rt %08X/%08X blend %08X fmt %u -> %.3f %.3f %.3f %.3f\n",
                             m_lastDrawn + m_lastSkipped - 1, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
                             r.regs[kRegRbColorInfo], r.regs[0x2201], uint32_t(td.Format), c[0], c[1], c[2], c[3]);
+                        RuntimeLog("[pixel]   psbools %08X %08X %08X %08X loops %08X %08X\n", r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
+                            r.regs[kRegBoolConstants + 6], r.regs[kRegBoolConstants + 7], r.regs[kRegLoopConstants + 16], r.regs[kRegLoopConstants + 31]);
                         lastValue = v;
                     }
                 }
