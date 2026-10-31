@@ -283,8 +283,17 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
             fclose(f);
         }
     }
+    // SetTextureLod: the LOD for later fetches with use_register_lod (first source component).
+    if (instr.opcode == FetchOpcode::SetTextureLod)
+    {
+        indent();
+        print("texLod = r{}.{};\n", uint32_t(instr.srcRegister), SWIZZLES[instr.srcSwizzle & 0x3]);
+        return;
+    }
     if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights)
         return;
+    const bool regLod = instr.opcode == FetchOpcode::TextureFetch && instr.useRegLod && !instr.useCompLod &&
+        instr.dimension != TextureDimension::Texture1D;
 
     if (instr.isPredicated)
     {
@@ -388,6 +397,8 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
     if (bicubic)
         out += "Bicubic";
 #endif
+    if (regLod)
+        out += "Lod";
 
     print("({0}_Texture{1}DescriptorIndex, {0}_SamplerDescriptorIndex, ", constNamePtr, dimension);
     printSrcRegister(componentCount);
@@ -401,6 +412,8 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
         out += ", cubeMapData";
         break;
     }
+    if (regLod)
+        out += ", texLod";
 
     out += ").";
 
@@ -838,7 +851,13 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             break;
 
         case AluVectorOpcode::Cube:
-            print("cube(r{}, cubeMapData)", instr.src1Register);
+            // The direction is the whole first source: a register, or (select 0) a float constant
+            // (water PS d5defa8e: c255; printing it as r255 failed the compile and skipped the draw).
+            if (instr.src1Select)
+                print("cube(r{}, cubeMapData)", instr.src1Register);
+            else
+                print("cube({}[{}{}], cubeMapData)", isPixelShader ? "g_PSConstants" : "g_VSConstants", instr.src1Register,
+                    instr.const0Relative ? (instr.constAddressRegisterRelative ? " + a0" : " + aL") : "");
             break;
 
         case AluVectorOpcode::Max4:
@@ -1567,6 +1586,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += "\tint aL = 0;\n";
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
+    out += "\tfloat texLod = 0.0;\n";
     if (isPixelShader)
     {
 #ifdef UNLEASHED_RECOMP

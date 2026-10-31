@@ -105,6 +105,11 @@ float2 Dims2D(Texture2D<float4> t)
 #define tfetch3D(t, s, uvw) ((g_Tex3DIs2D >> (t)) & 1 ? SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], (uvw).xy) : SAMPLE(g_Tex3D[t], g_Samp[(s) & 15], uvw))
 #define tfetchCube(t, s, uvw, cmd) SAMPLE(g_TexCube[t], g_Samp[(s) & 15], (uvw).z ? (cmd).cubeMapDirections[1] : (cmd).cubeMapDirections[0])
 #define getPixelCoord(t, uv) (Dims2D(g_Tex2D[t]) * (uv))
+// Register LOD (SetTextureLod + use_register_lod): an explicit mip level.
+#define SAMPLE_LOD(tex, s, c, l) tex.SampleLevel(s, c, l)
+#define tfetch2DLod(t, s, uv, off, l) SAMPLE_LOD(g_Tex2D[t], g_Samp[(s) & 15], (uv) + (off) / Dims2D(g_Tex2D[t]), l)
+#define tfetch3DLod(t, s, uvw, l) ((g_Tex3DIs2D >> (t)) & 1 ? SAMPLE_LOD(g_Tex2D[t], g_Samp[(s) & 15], (uvw).xy, l) : SAMPLE_LOD(g_Tex3D[t], g_Samp[(s) & 15], uvw, l))
+#define tfetchCubeLod(t, s, uvw, cmd, l) SAMPLE_LOD(g_TexCube[t], g_Samp[(s) & 15], (uvw).z ? (cmd).cubeMapDirections[1] : (cmd).cubeMapDirections[0], l)
 
 struct CubeMapData
 {

@@ -1363,6 +1363,14 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     const bool zeroNoise = noiseMask != 0;
     if (skipped || !topology || !d.vs || !d.ps || d.source == IndexSource::Immediate || (rectList && !r.rectListGs))
     {
+        // SCDA_TRACE_SKIP=1: each distinct (reason, primitive, source, shaders) skip once.
+        static const bool traceSkip = getenv("SCDA_TRACE_SKIP") != nullptr;
+        static std::unordered_set<uint64_t> skipSeen;
+        if (traceSkip && skipSeen.size() < 2000 &&
+            skipSeen.insert((uint64_t(d.primType) << 56) ^ (uint64_t(d.source) << 48) ^ (d.vs ? d.vs->hash : 1) ^ (d.ps ? d.ps->hash * 3 : 2) ^ (uint64_t(r.regs[kRegRbColorInfo]) << 20) ^ r.regs[0x2280] ^ (uint64_t(r.regs[0x2200]) << 30)).second)
+            RuntimeLog("[skip] frame %llu prim %u topology %u source %u vs %016llx ps %016llx n %u forced %d ptsize %08X minmax %08X rt %08X/%08X z %08X/%08X mask %08X vte %08X\n", m_presented, d.primType, topology,
+                uint32_t(d.source), d.vs ? (unsigned long long)d.vs->hash : 0ull, d.ps ? (unsigned long long)d.ps->hash : 0ull, d.indexCount, skipped ? 1 : 0, r.regs[0x2280], r.regs[0x2281],
+                r.regs[kRegRbSurfaceInfo], r.regs[kRegRbColorInfo], r.regs[0x2200], r.regs[kRegRbDepthInfo], r.regs[0x2104], r.regs[0x2206]);
         m_lastSkipped++;
         return;
     }
@@ -1552,6 +1560,11 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     }
     if (!vs || !ps)
     {
+        static const bool traceSkip = getenv("SCDA_TRACE_SKIP") != nullptr;
+        static std::unordered_set<uint64_t> failSeen;
+        if (traceSkip && failSeen.insert(d.vs->hash ^ d.ps->hash * 3).second)
+            RuntimeLog("[skip] frame %llu shader failed: vs %016llx %s ps %016llx %s\n", m_presented, (unsigned long long)d.vs->hash, vs ? "ok" : "FAILED",
+                (unsigned long long)d.ps->hash, ps ? "ok" : "FAILED");
         m_lastSkipped++;
         return;
     }
@@ -1648,6 +1661,9 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         {
             if (d.indexSnapshot < 0 || size_t(d.indexSnapshot) >= frame.memory.size())
             {
+                static const bool traceSkip = getenv("SCDA_TRACE_SKIP") != nullptr;
+                if (traceSkip)
+                    RuntimeLog("[skip] frame %llu no index snapshot (ib %08X n %u)\n", m_presented, d.indexBase, d.indexCount);
                 m_lastSkipped++;
                 return;
             }
@@ -1673,6 +1689,10 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         }
         if (!count)
         {
+            static const bool traceSkip = getenv("SCDA_TRACE_SKIP") != nullptr;
+            static std::unordered_set<uint64_t> emptySeen;
+            if (traceSkip && emptySeen.insert((uint64_t(d.primType) << 32) | d.indexCount).second)
+                RuntimeLog("[skip] frame %llu no indices after expansion: prim %u n %u source %u\n", m_presented, d.primType, d.indexCount, uint32_t(d.source));
             m_lastSkipped++;
             return;
         }
