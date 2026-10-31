@@ -205,10 +205,22 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
             return;
         }
         // SCDA raw: fetch from guest memory with the fetch constant's base/endian (see shader_common_sm5).
+        // Signedness is format_comp_all (signed_rf_mode_all is only the signed rounding mode), and the
+        // result scales by 2^exp_adjust (Xenia ucode VertexFetchInstruction). Using signed_rf_mode made
+        // signed packed UVs unsigned: negative coordinates wrapped and smeared textures into streaks
+        // (Kinshasa02 diamond-plate walkway). SCDA_VFETCH_OLD_SIGN=1 restores it at translation (A/B).
         static constexpr char kComp[] = { 'x', 'y', 'z', 'w' };
-        print("FetchVertex({}, r{}.{}, {}, {}, {}, {}, {}).", instr.constIndex * 3 + instr.constIndexSelect,
+        static const bool oldSign = getenv("SCDA_VFETCH_OLD_SIGN") != nullptr;
+        const bool isSigned = oldSign ? instr.signedRfModeAll : instr.formatCompAll;
+        const int expAdjust = oldSign ? 0 : int(instr.expAdjust);
+        if (expAdjust)
+            out += "(";
+        print("FetchVertex({}, r{}.{}, {}, {}, {}, {}, {})", instr.constIndex * 3 + instr.constIndexSelect,
             uint32_t(instr.srcRegister), kComp[instr.srcSwizzle & 3], int32_t(instr.offset), uint32_t(instr.stride),
-            uint32_t(instr.format), uint32_t(instr.signedRfModeAll ? 1 : 0), uint32_t(instr.numFormatAll ? 0 : 1));
+            uint32_t(instr.format), uint32_t(isSigned ? 1 : 0), uint32_t(instr.numFormatAll ? 0 : 1));
+        if (expAdjust)
+            print(" * {})", std::ldexp(1.0, expAdjust));
+        out += ".";
         printDstSwizzle(instr.dstSwizzle, true);
         out += ";\n";
         printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);

@@ -3,6 +3,15 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
+## FIXED. Smeared, streaky floor textures (Kinshasa02 diamond-plate walkway) (2026-10-31)
+
+- **Symptom:** walkway texture stretched into horizontal streaks/ripples (user screenshot, Kinshasa02 start).
+- **Cause:** raw vertex fetch took signedness from `signed_rf_mode_all` (the signed rounding mode) instead of
+  `format_comp_all`, and ignored `exp_adjust` (x 2^n). Signed packed UVs decoded as unsigned; negative coordinates
+  wrapped. Textures themselves decoded fine (`SCDA_DUMP_TEXTURES`).
+- **Fix:** Xenia's fields; translator v17. `SCDA_VFETCH_OLD_SIGN=1` restores the old decode (A/B). Verified
+  `_run/kv3/` vs `_run/kv/` (same autopress view).
+
 ## OPEN. NY Statue of Liberty pedestal dimmer than the 360 (2026-10-31)
 
 - **Symptom:** floodlit pedestal ~30% darker and less golden than the 360 playthrough (ours top-20% pixels
