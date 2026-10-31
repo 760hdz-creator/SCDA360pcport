@@ -1153,7 +1153,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
 
     // PA_CL_CLIP_CNTL bit 16 (CLIP_DISABLE): no 0 <= z <= w clip. The title's D3D clears draw at
     // z = -2^-28 with clipping off (Kinshasa scope mask); clipped, they drew nothing.
-    uint32_t cull = HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
+    uint32_t cull = g_debugNoCull ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
     auto& raster = r.raster[cull | (ccw << 4) | (noClip << 5)];
     if (!raster)
     {
@@ -2129,7 +2129,7 @@ void D3D11Renderer::PollQueries()
         if (hr != S_OK && !lost)
             return false;
         static const bool allVisible = getenv("SCDA_QUERY_ALL_VISIBLE") != nullptr; // A/B: every query fully visible
-        const uint32_t guest = lost || allVisible ? kOcclusionFallbackSamples : uint32_t(std::min<UINT64>(samples / std::max(p.samplesPerPixel, 1u), 0x7FFFFFFF));
+        const uint32_t guest = lost || allVisible || g_debugQueriesVisible ? kOcclusionFallbackSamples : uint32_t(std::min<UINT64>(samples / std::max(p.samplesPerPixel, 1u), 0x7FFFFFFF));
         const bool written = Frames().VisibleWrite([&] { return WriteOcclusionResult(p.address, p.generation, guest); });
         Frames().QueryAnswered();
         if (trace)
