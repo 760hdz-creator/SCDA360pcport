@@ -103,3 +103,40 @@ TEST(failed_shader_cached_as_failed)
     CHECK(&a == &c);
     CHECK_EQ(ShaderCompilerCompileCount(), before + 1);
 }
+
+// SCDA_SHADER_SWEEP=<dir>: translate + compile every <name>.ps.bin / <name>.vs.bin (big-endian
+// microcode, e.g. extracted from the .lin packages) under dir and list the failures. Offline check
+// for shaders no test run reaches (a failed compile skips every draw using the shader).
+TEST(shader_sweep)
+{
+    const char* dir = getenv("SCDA_SHADER_SWEEP");
+    if (!dir)
+    {
+        printf("  (skipped: SCDA_SHADER_SWEEP not set)\n");
+        return;
+    }
+    auto cache = TempCache("sweep");
+    uint32_t total = 0, failed = 0;
+    for (auto& e : std::filesystem::recursive_directory_iterator(dir))
+    {
+        const std::string name = e.path().filename().string();
+        const bool ps = name.ends_with(".ps.bin"), vs = name.ends_with(".vs.bin");
+        if (!ps && !vs)
+            continue;
+        std::vector<uint8_t> bytes(std::filesystem::file_size(e.path()));
+        std::ifstream(e.path(), std::ios::binary).read((char*)bytes.data(), bytes.size());
+        if (bytes.size() < 4)
+            continue;
+        const ShaderBlob* b = ShaderCacheInsert(ps ? ShaderType::Pixel : ShaderType::Vertex, (const uint32_t*)bytes.data(), uint32_t(bytes.size() / 4));
+        if (!b)
+            continue;
+        total++;
+        if (!GetCompiledShader(*b, cache).ok)
+        {
+            failed++;
+            printf("  FAILED %016llx %s\n", (unsigned long long)b->hash, e.path().string().c_str());
+        }
+    }
+    printf("  shader sweep: %u compiled, %u failed\n", total, failed);
+    CHECK_EQ(failed, 0u);
+}
