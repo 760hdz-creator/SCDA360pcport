@@ -25,6 +25,30 @@ Evidence paths under `_run/` are local only (git-ignored).
   Xbox One X back-compat) is brighter than a 360; do not use it for absolute brightness. That also weakens the
   statue measurement below.
 
+## OPEN. Jail: no window-frame light patches on the gallery floor (2026-10-31)
+
+- **Symptom:** on the 360 (user screenshot, Jail opening, camera pitched down) the floor seen through the cell
+  door's lower glass has sharp window-shaped light patches; ours is evenly lit. Cell floor tiles match.
+- **Repro:** `SCDA_LAUNCH_DATA=_run/maps/02_Jail_01.launch SCDA_AUTOPRESS=1500:RY=-1:10`, dump frame 1620.
+- **Pipeline (frame trace, `SCDA_TRACE_RESOLVE` + `SCDA_PIXEL_WATCH`):** the floor is the material PS 63053924; its
+  projector light (b132, cookie s5 = round spot 04C46000) is scaled by r1.w = min(s15.z + ..., s15.w), s15 = the
+  640x360 screen-space light mask at 01EB2000 (EDRAM 0x1C0). Mask passes: colour clear + aliased depth clear
+  (0,1,1,1) -> point-light shadow passes PS b5531808 (blend 01010001: colour = src, alpha = src + dst, outputs >= 0,
+  c2 = (0, .8, 0, 0)) -> resolve -> copy cf73f1b6 `(s0.x, c0.w, s0.w, c0.w)` (alpha -> B) -> sun passes 49a6d6fc /
+  b5531808 on G/A -> blur 055ea5f4 (blurs .xyw, passes .z through) -> material. Lightmap s12 decodes fine (RGBE).
+- **Why ours is flat:** alpha starts at 1 (aliased clear), so the additive alpha saturates and B (the material's
+  .z) is 1 everywhere. The window shadows are in R (overwrite of the last pass).
+- **Contradiction:** Kinshasa01 has the same two clears but no additive passes; its lit ground needs B = clear alpha
+  = 1. Clear alpha 0 (stencil in A) gives the Jail patches but puts Kinshasa's ground in shadow. Reading R instead
+  of B (swizzle without the resolve's red/blue swap) also gives the patches but turns bloom yellow -> cyan.
+  Unresolved: maybe Kinshasa should issue additive light passes too (occlusion / visibility), or the EDRAM
+  alias semantics differ.
+- **Done meanwhile (translator v18):** resolve copies are bound raw, so the shader now applies the fetch swizzle
+  composed with the resolve's dest swap (RB_COPY_DEST_INFO bit 24). For ARGB resolves this cancels (no change);
+  fmt 36 / 31 resolves now read (r, 1, 1, 1) / (r, g, 1, 1) and A0A forces alpha 1. A/B (`SCDA_NO_RESOLVE_SWIZZLE=1`)
+  at frame 2000: Kinshasa01, Cozumel_01 equal; Intro within run-to-run drift. rtrace draw lines now log blend;
+  `SCDA_TRACE_RESOLVE` logs each resolve fetch's swizzle.
+
 ## OPEN. NY Statue of Liberty pedestal dimmer than the 360 (2026-10-31)
 
 - **Symptom:** floodlit pedestal ~30% darker and less golden than the 360 playthrough (ours top-20% pixels

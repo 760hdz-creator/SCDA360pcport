@@ -444,6 +444,7 @@ struct DrawResources
         DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; // the source target's
         uint32_t rowBytes = 0; // guest bytes per row (RB_COPY_DEST_INFO format x width)
         uint32_t destFormat = 0; // RB_COPY_DEST_INFO bits 7-12
+        bool destSwap = false;   // RB_COPY_DEST_INFO bit 24: red and blue swapped in memory
         uint32_t version = 0;    // bumped by each copy into texture
         uint64_t lastCopy = 0;   // resolveSerial at the last copy into texture
         uint64_t guestHash = 0;  // SCDA_TRACE_STALE: guest bytes under the texture after the last copy
@@ -1029,7 +1030,6 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     SharedConstants shared = BuildSharedConstants(regs, layout.pitch, layout.sampleRows / layout.samplesY);
     shared.positionScale[0] = 1.0f / float(r.scale * layout.samplesX);
     shared.positionScale[1] = 1.0f / float(r.scale * layout.samplesY);
-    m_context->UpdateSubresource(r.constants[2].Get(), 0, nullptr, &shared, 0, 0);
 
     // Render targets: RT0, RT1-3 with a colour mask (MRT), and the depth surface.
     static constexpr uint32_t kInfo[4] = { kRegRbColorInfo, kRegRbColor1Info, kRegRbColor2Info, kRegRbColor3Info };
@@ -1213,6 +1213,24 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
                 res->second.guestHash = hash; // log each change once
             }
             srvs[slot] = ResolvedView(m_device, m_context, res->second, t.width, t.height);
+            // Resolve copies are bound raw (host channel order = the render target's), so the shader
+            // applies the fetch swizzle, composed with the resolve's red/blue swap (memory X = target Z).
+            // ARGB targets resolve swapped and fetch X<->Z, which cancels; single-channel float resolves
+            // fetch (r, 1, 1, 1) where the raw view reads (r, 0, 0, 1). SCDA_NO_RESOLVE_SWIZZLE=1: old.
+            static const bool noResolveSwizzle = getenv("SCDA_NO_RESOLVE_SWIZZLE") != nullptr;
+            uint32_t swizzle = t.swizzle;
+            if (res->second.destSwap)
+                for (uint32_t i = 0; i < 4; i++)
+                {
+                    const uint32_t c = (swizzle >> (i * 3)) & 7;
+                    if (c == 0 || c == 2)
+                        swizzle ^= 2u << (i * 3);
+                }
+            if (!noResolveSwizzle && swizzle != 0x688)
+                shared.texSwizzle[slot] = 0x1000 | swizzle;
+            if (getenv("SCDA_TRACE_RESOLVE") && TraceResolveOnce((3ull << 60) | (uint64_t(t.physical) << 16) | t.swizzle))
+                RuntimeLog("[resolve] fetch %08X fmt %u %ux%u swizzle %03X (resolve fmt %u)\n", t.physical, t.format, t.width, t.height,
+                    t.swizzle, res->second.destFormat);
             continue;
         }
         static const bool traceResolve = getenv("SCDA_TRACE_RESOLVE") != nullptr;
@@ -1419,6 +1437,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         if (it->second)
             srvs[slot] = it->second.Get();
     }
+    m_context->UpdateSubresource(r.constants[2].Get(), 0, nullptr, &shared, 0, 0);
     for (auto set : { &ID3D11DeviceContext::VSSetShaderResources, &ID3D11DeviceContext::PSSetShaderResources })
     {
         (m_context->*set)(kHlslTex2DSlot, 32, srvs);
@@ -1537,9 +1556,9 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             if (count > 3)
                 used += " " + std::to_string(n);
         }
-        RuntimeLog("[rtrace] draw %u vs %016llx ps %016llx rt %08X/%08X mask %08X zctl %08X zinfo %08X vte %08X zs %08X zo %08X wo %08X sc %08X clip %08X cc %08X aref %08X ib %08X n %u samples%s\n",
+        RuntimeLog("[rtrace] draw %u vs %016llx ps %016llx rt %08X/%08X blend %08X mask %08X zctl %08X zinfo %08X vte %08X zs %08X zo %08X wo %08X sc %08X clip %08X cc %08X aref %08X ib %08X n %u samples%s\n",
             m_lastDrawn + m_lastSkipped, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
-            r.regs[kRegRbColorInfo], r.regs[0x2104], r.regs[0x2200], r.regs[kRegRbDepthInfo], r.regs[0x2206], r.regs[0x2113],
+            r.regs[kRegRbColorInfo], r.regs[0x2201], r.regs[0x2104], r.regs[0x2200], r.regs[kRegRbDepthInfo], r.regs[0x2206], r.regs[0x2113],
             r.regs[0x2114], r.regs[0x2080], r.regs[0x2205], r.regs[0x2204], r.regs[0x2202], r.regs[0x210E], d.indexBase, d.indexCount, used.c_str());
         // SCDA_TRACE_PS=<ps hash hex>[,..]: draws with one of those PS also log PS c0-c7 and blend control.
         static const std::vector<uint64_t> tracePsList = []
@@ -2130,6 +2149,7 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
             }
             dst.rowBytes = w * TextureElementBytes((res.destInfo >> 7) & 0x3F);
             dst.destFormat = (res.destInfo >> 7) & 0x3F;
+            dst.destSwap = (res.destInfo >> 24) & 1;
             dstIt = r.resolved.find(base);
         }
         auto& dst = dstIt->second;
