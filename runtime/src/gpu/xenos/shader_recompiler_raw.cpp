@@ -34,11 +34,12 @@ void ShaderRecompiler::recompileRaw(const be<uint32_t>* code, uint32_t shaderSiz
 
         out += "void main(in uint iVertexId : SV_VertexID,\n";
         out += "\tout float4 oPos : SV_Position,\n";
-        println("\tout float4 oT[{}] : TEXCOORD0)", kInterpolators);
+        println("\tout float4 oT[{}] : TEXCOORD0,", kInterpolators);
+        out += "\tout float4 oPts : POINTSIZE)\n"; // point sprite size (x), read by the point GS
         out += "{\n";
         out += "\toPos = 0.0;\n";
         println("\t[unroll] for (uint t = 0; t < {}; t++) oT[t] = 0.0;", kInterpolators);
-        out += "\tfloat4 oPts = 0.0;\n";
+        out += "\toPts = 0.0;\n";
         for (uint32_t i = 32; i <= 36; i++)
             println("\tfloat4 oMemExport{} = 0.0;", i);
         // Xenos: r0.x holds the vertex index on entry.

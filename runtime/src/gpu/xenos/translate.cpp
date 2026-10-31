@@ -29,9 +29,10 @@ cbuffer SharedConstants : register(b2)
     uint g_ColorClamp;       // bit n: oCn goes to a 7e3 target (clamped like the EDRAM store)
     uint g_AlphaFunc;        // RB_COLORCONTROL bits 0-2 (never, <, ==, <=, >, !=, >=, always)
     uint g_Tex3DIs2D;        // bit n: fetch constant n is not a 3D texture (tfetch3D samples g_Tex2D)
-    uint g_Pad0;
+    uint g_ParamGen;         // PS param-gen register + 1, 0 = off
     float2 g_PositionScale;  // 1 / (internal resolution scale x MSAA samples) per axis: SV_Position -> guest pixels
-    float2 g_Pad1;
+    float g_PointSize;       // constant point sprite diameter (guest pixels)
+    uint g_PointMinMax;      // PA_SU_POINT_MINMAX raw
 };
 uint g_SpecConstants() { return g_SpecConstantsValue; }
 // Alpha test against RB_ALPHA_REF: < 0 = kill (fed to clip()).
@@ -286,7 +287,12 @@ float4 Clamp7e3(float4 c, uint n) { return (g_ColorClamp >> n) & 1 ? float4(clam
 void main(in float4 iPos : SV_Position, in float4 iT[16] : TEXCOORD0, in bool iFace : SV_IsFrontFace,
     out float4 oC0 : SV_Target0, out float4 oC1 : SV_Target1, out float4 oC2 : SV_Target2, out float4 oC3 : SV_Target3)
 {
-    xenos_main(float4(iPos.xy * g_PositionScale, iPos.zw), iT, iFace, oC0, oC1, oC2, oC3);
+    // Param gen: pixel position (guest pixels) in xy; zw keep the point sprite coordinate the point
+    // geometry shader wrote there (0 for other primitives).
+    float4 t[16] = iT;
+    if (g_ParamGen)
+        t[g_ParamGen - 1] = float4(iPos.xy * g_PositionScale, iT[g_ParamGen - 1].zw);
+    xenos_main(float4(iPos.xy * g_PositionScale, iPos.zw), t, iFace, oC0, oC1, oC2, oC3);
     oC0 = Clamp7e3(oC0, 0); oC1 = Clamp7e3(oC1, 1); oC2 = Clamp7e3(oC2, 2); oC3 = Clamp7e3(oC3, 3);
 }
 )HLSL";

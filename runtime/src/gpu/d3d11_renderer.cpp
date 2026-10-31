@@ -263,7 +263,7 @@ struct V
 {
     float4 pos : SV_Position;
     float4 t[16] : TEXCOORD0;
-    float4 c[2] : COLOR0;
+    float4 psize : POINTSIZE;
 };
 [maxvertexcount(4)]
 void main(triangle V v[3], inout TriangleStream<V> s)
@@ -275,12 +275,49 @@ void main(triangle V v[3], inout TriangleStream<V> s)
     vd.pos = va.pos + vb.pos - vc.pos;
     [unroll] for (int i = 0; i < 16; i++)
         vd.t[i] = va.t[i] + vb.t[i] - vc.t[i];
-    [unroll] for (int j = 0; j < 2; j++)
-        vd.c[j] = va.c[j] + vb.c[j] - vc.c[j];
+    vd.psize = va.psize;
     s.Append(vc);
     s.Append(va);
     s.Append(vb);
     s.Append(vd);
+}
+)HLSL";
+
+// Point lists (Xenos point sprites): each point becomes a screen-aligned quad of the VS-exported
+// diameter (oPts.x, else PA_SU_POINT_SIZE), clamped to PA_SU_POINT_MINMAX, in guest pixels. With
+// param gen on, the sprite coordinate (0..1, t down) goes to that interpolator's zw (Xenia).
+static const char kPointListGs[] = R"HLSL(
+struct V
+{
+    float4 pos : SV_Position;
+    float4 t[16] : TEXCOORD0;
+    float4 psize : POINTSIZE;
+};
+cbuffer SharedTail : register(b2)
+{
+    uint4 skip[61];
+    float4 windowToNdc;   // xy: 2 / target size in guest pixels
+    uint4 misc;           // colorClamp, alphaFunc, tex3DIs2D, paramGen
+    float4 scaleAndPoint; // positionScale.xy, point diameter, PA_SU_POINT_MINMAX
+};
+[maxvertexcount(4)]
+void main(point V v[1], inout TriangleStream<V> s)
+{
+    const uint mm = asuint(scaleAndPoint.w);
+    float size = v[0].psize.x > 0.0 ? v[0].psize.x : scaleAndPoint.z;
+    size = clamp(size, float(mm & 0xFFFF) / 8.0, float(mm >> 16) / 8.0);
+    const float2 h = 0.5 * size * windowToNdc.xy * v[0].pos.w;
+    const uint gen = misc.w;
+    [unroll] for (int i = 0; i < 4; i++)
+    {
+        const float2 c = float2(i & 1, i >> 1); // (0,0) top left .. (1,1) bottom right
+        V o = v[0];
+        o.pos.xy += float2(c.x * 2.0 - 1.0, 1.0 - c.y * 2.0) * h;
+        [unroll] for (uint k = 0; k < 16; k++)
+            if (gen == k + 1)
+                o.t[k].zw = c;
+        s.Append(o);
+    }
 }
 )HLSL";
 
@@ -324,6 +361,7 @@ struct DrawResources
     ComPtr<ID3D11ShaderResourceView> gammaRampSrv;
     uint32_t gammaRampVersion = ~0u;
     ComPtr<ID3D11GeometryShader> rectListGs;
+    ComPtr<ID3D11GeometryShader> pointListGs;
     ComPtr<ID3D11PixelShader> zeroPs; // aliased depth-only clears: returns 1 (x blend factor), never kills
     ComPtr<ID3D11ComputeShader> saturateCs;
     ComPtr<ID3D11Buffer> saturateRect;
@@ -525,6 +563,9 @@ bool D3D11Renderer::CreateDrawResources()
     auto gs = CompileHlsl(kRectListGs, "gs_5_0", &error);
     if (gs.empty() || FAILED(m_device->CreateGeometryShader(gs.data(), gs.size(), nullptr, &r->rectListGs)))
         printf("[d3d11] rect list shader: %s\n", error.c_str()); // rect lists are then skipped
+    auto pgs = CompileHlsl(kPointListGs, "gs_5_0", &error);
+    if (pgs.empty() || FAILED(m_device->CreateGeometryShader(pgs.data(), pgs.size(), nullptr, &r->pointListGs)))
+        printf("[d3d11] point list shader: %s\n", error.c_str()); // point lists are then skipped
     {
         static const char kZeroPs[] = "void main(out float4 o0 : SV_Target0, out float4 o1 : SV_Target1, out float4 o2 : SV_Target2,"
              " out float4 o3 : SV_Target3) { o0 = o1 = o2 = o3 = 1.0; }";
@@ -1331,6 +1372,11 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     ApplyRegisterWrites(frame, d.regWritesEnd);
     uint32_t topology = HostTopology(d.primType);
     const bool rectList = d.primType == 8;
+    // Point lists draw as points expanded to sprites by pointListGs. SCDA_NO_POINT_SPRITES=1 skips them.
+    static const bool noPoints = getenv("SCDA_NO_POINT_SPRITES") != nullptr;
+    const bool pointList = d.primType == 1 && r.pointListGs && !noPoints;
+    if (pointList)
+        topology = 1; // D3D11_PRIMITIVE_TOPOLOGY_POINTLIST
     // SCDA_SKIP_SHADER=<hex hash>[,..]: skip draws using that VS or PS (finding which draw makes a glitch
     // when draw order varies between runs).
     static const std::vector<uint64_t> skipShaders = []
@@ -1648,7 +1694,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     const bool aliasClear = DepthOnlyOverwritesColor(r.regs);
     const bool depthOnly = (r.regs[kRegRbModeControl] & 7) == 5 && !depthOnlyPs && !aliasClear;
     m_context->PSSetShader(depthOnly ? nullptr : aliasClear && r.zeroPs && !aliasTitlePs ? r.zeroPs.Get() : ps.Get(), nullptr, 0);
-    m_context->GSSetShader(rectList ? r.rectListGs.Get() : nullptr, nullptr, 0);
+    m_context->GSSetShader(rectList ? r.rectListGs.Get() : pointList ? r.pointListGs.Get() : nullptr, nullptr, 0);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(topology));
     const bool expand = NeedsTriangleListExpansion(d.primType);
     if (d.source == IndexSource::Dma || expand)
@@ -2269,6 +2315,7 @@ void D3D11Renderer::Present(const Frame& frame)
         ID3D11Buffer* cbs[3] = { r.constants[0].Get(), r.constants[1].Get(), r.constants[2].Get() };
         m_context->VSSetConstantBuffers(0, 3, cbs);
         m_context->PSSetConstantBuffers(0, 3, cbs);
+        m_context->GSSetConstantBuffers(0, 3, cbs); // pointListGs reads b2
         r.stateDirty = true;
         r.applied = 0;
         // Draws and resolves in stream order: resolve k runs before draw resolves[k].drawIndex.
