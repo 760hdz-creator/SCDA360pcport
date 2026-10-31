@@ -99,6 +99,8 @@ float2 Dims2D(Texture2D<float4> t)
 #else
 #define SAMPLE(tex, s, c) tex.Sample(s, c)
 #endif
+// 1D textures are bound as one-row 2D textures (DecodeTextureFetch: height 1).
+#define tfetch1D(t, s, u) SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], float2(u, 0.5))
 #define tfetch2D(t, s, uv, off) SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], (uv) + (off) / Dims2D(g_Tex2D[t]))
 #define tfetch2DBicubic(t, s, uv, off) tfetch2D(t, s, uv, off)
 #define getWeights2D(t, s, uv, off) (isnan(uv) ? 0.0 : frac((uv) * Dims2D(g_Tex2D[t]) + (off) - 0.5))
@@ -245,8 +247,9 @@ static std::string BuildInclude()
     {
         snprintf(line, sizeof(line),
             "#define s%d_Texture2DDescriptorIndex %d\n#define s%d_Texture3DDescriptorIndex %d\n"
-            "#define s%d_TextureCubeDescriptorIndex %d\n#define s%d_SamplerDescriptorIndex %d\n",
-            n, n, n, n, n, n, n, n);
+            "#define s%d_TextureCubeDescriptorIndex %d\n#define s%d_SamplerDescriptorIndex %d\n"
+            "#define s%d_Texture1DDescriptorIndex %d\n",
+            n, n, n, n, n, n, n, n, n, n);
         s += line;
     }
     return s;

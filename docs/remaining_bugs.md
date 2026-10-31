@@ -17,6 +17,9 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Okhotsk_02 underwater pass, HQ_05_B:** loop shaders referenced undeclared `iN`; loop constants now read
   `g_Loops` (count, aL start, step).
 - **Hotel particles:** point lists were skipped; now expanded to sprites (geometry shader) with param gen.
+- **Common package (3 PS):** 1D texture fetches (`tfetch1D`) had no translation; 1D textures now bind as one-row
+  2D textures (size_1d width).
+- **Whole game:** 4532 unique shaders from all 20 `.lin` packages translate and compile (sweep 2026-10-31).
 - **Offline check:** `SCDA_SHADER_SWEEP=<dir> scda_tests` compiles every `*.ps.bin` / `*.vs.bin` under dir.
   Microcode from the `.lin` packages: inflate, then each container at magic `102A1100` (pixel) / `102A1101`
   (vertex), microcode at container + virtualSize + shader.physicalOffset. `SCDA_TRACE_SKIP=1` logs skipped draws.

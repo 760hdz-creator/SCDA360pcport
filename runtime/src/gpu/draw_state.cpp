@@ -236,6 +236,12 @@ TextureFetch DecodeTextureFetch(const RegisterFile& r, uint32_t slot)
     t.physical = (c1 & 0xFFFFF000) & 0x1FFFFFFF;
     t.width = (c2 & 0x1FFF) + 1;
     t.height = ((c2 >> 13) & 0x1FFF) + 1;
+    // 1D textures (dword 5 dimension 0): size_1d is a 24-bit width, one row (Xenia).
+    if (((r[kRegFetchConstants + slot * 6 + 5] >> 9) & 3) == 0)
+    {
+        t.width = std::min((c2 & 0xFFFFFF) + 1, 16384u);
+        t.height = 1;
+    }
     t.swizzle = (c3 >> 1) & 0xFFF;
     if (!t.pitch)
         t.pitch = t.width;
