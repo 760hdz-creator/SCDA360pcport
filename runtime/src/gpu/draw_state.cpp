@@ -407,7 +407,7 @@ static void DecodeBlock(uint32_t format, const uint32_t* d, uint32_t out[16][4])
     }
 }
 
-std::atomic<bool> g_debugQueriesVisible, g_debugNoCull;
+std::atomic<bool> g_debugQueriesVisible{ getenv("SCDA_QUERY_ALL_VISIBLE") != nullptr }, g_debugNoCull{ getenv("SCDA_NO_CULL") != nullptr };
 
 uint64_t BlockLinearHash(const TextureFetch& t, const uint8_t* guest)
 {

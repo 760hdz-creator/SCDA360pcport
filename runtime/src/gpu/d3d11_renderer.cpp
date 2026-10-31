@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bit>
 #include <atomic>
 #include <bitset>
 #include <cmath>
@@ -1153,7 +1154,10 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
 
     // PA_CL_CLIP_CNTL bit 16 (CLIP_DISABLE): no 0 <= z <= w clip. The title's D3D clears draw at
     // z = -2^-28 with clipping off (Kinshasa scope mask); clipped, they drew nothing.
-    uint32_t cull = g_debugNoCull ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
+    // SCDA_NO_CULL=<present>: culling off from that present on (same camera before/after); =1: from the start.
+    static const uint64_t noCullFrom = getenv("SCDA_NO_CULL") ? strtoull(getenv("SCDA_NO_CULL"), nullptr, 10) : 0;
+    const bool noCull = g_debugNoCull ? noCullFrom <= 1 || m_presented >= noCullFrom : false;
+    uint32_t cull = noCull ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
     auto& raster = r.raster[cull | (ccw << 4) | (noClip << 5)];
     if (!raster)
     {
@@ -1878,6 +1882,39 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     const bool aliasClear = DepthOnlyOverwritesColor(r.regs);
     const bool depthOnly = (r.regs[kRegRbModeControl] & 7) == 5 && !depthOnlyPs && !aliasClear;
     m_context->PSSetShader(depthOnly ? nullptr : aliasClear && r.zeroPs && !aliasTitlePs ? r.zeroPs.Get() : ps.Get(), nullptr, 0);
+    // SCDA_FACE_DRAW=<present>,<draw>: that draw shows its facing instead (red front, green back), unculled
+    // and unblended (with SCDA_DUMP_DRAWS: which triangles the rasterizer would cull).
+    static unsigned long long facePresent = 0;
+    static unsigned faceDrawIndex = 0;
+    static const bool faceDraw = getenv("SCDA_FACE_DRAW") && sscanf(getenv("SCDA_FACE_DRAW"), "%llu,%u", &facePresent, &faceDrawIndex) == 2;
+    // SCDA_FACE_VS=<vs hash hex>: every draw with that vertex shader, in every frame.
+    static const uint64_t faceVs = getenv("SCDA_FACE_VS") ? strtoull(getenv("SCDA_FACE_VS"), nullptr, 16) : 0;
+    static const uint64_t facePsHash = getenv("SCDA_FACE_PS") ? strtoull(getenv("SCDA_FACE_PS"), nullptr, 16) : 0;
+    const bool faceThis = (faceDraw && m_presented == facePresent && m_lastDrawn + m_lastSkipped == faceDrawIndex) || (faceVs && d.vs->hash == faceVs) ||
+                          (facePsHash && d.ps->hash == facePsHash);
+    if (faceThis)
+    {
+        static ComPtr<ID3D11PixelShader> facePs;
+        static ComPtr<ID3D11RasterizerState> noCull;
+        if (!facePs)
+        {
+            static const char kFacePs[] = "void main(bool f : SV_IsFrontFace, out float4 o0 : SV_Target0, out float4 o1 : SV_Target1,"
+                " out float4 o2 : SV_Target2, out float4 o3 : SV_Target3) { o0 = f ? float4(1, 0, 0, 1) : float4(0, 1, 0, 1); o1 = o2 = o3 = o0; }";
+            std::string error;
+            auto code = CompileHlsl(kFacePs, true, &error);
+            if (code.empty() || FAILED(m_device->CreatePixelShader(code.data(), code.size(), nullptr, &facePs)))
+                RuntimeLog("[face] shader: %s\n", error.c_str());
+            D3D11_RASTERIZER_DESC rd{};
+            rd.FillMode = D3D11_FILL_SOLID;
+            rd.CullMode = D3D11_CULL_NONE;
+            rd.DepthClipEnable = TRUE;
+            m_device->CreateRasterizerState(&rd, &noCull);
+        }
+        m_context->PSSetShader(facePs.Get(), nullptr, 0);
+        m_context->RSSetState(noCull.Get());
+        m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        if (!faceVs && !facePsHash) RuntimeLog("[face] present %llu draw %u vs %016llx: facing shader\n", m_presented, faceDrawIndex, (unsigned long long)d.vs->hash);
+    }
     m_context->GSSetShader(rectList ? r.rectListGs.Get() : pointList ? r.pointListGs.Get() : nullptr, nullptr, 0);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(topology));
     const bool expand = NeedsTriangleListExpansion(d.primType);
@@ -1900,6 +1937,27 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             indices.resize(d.indexBytes);
             SwapIndices(frame.memory[d.indexSnapshot].bytes.data(), d.indexBytes, d.indexEndian, indices.data());
             count = std::min(d.indexCount, d.indexBytes / (d.index32 ? 4 : 2));
+            // SCDA_TRACE_DRAW=<present>,<draw>: that draw's primitive, restart state and first indices.
+            static unsigned long long tdPresent = 0;
+            static unsigned tdDraw = 0;
+            static const bool td = getenv("SCDA_TRACE_DRAW") && sscanf(getenv("SCDA_TRACE_DRAW"), "%llu,%u", &tdPresent, &tdDraw) == 2;
+            if (td && m_presented == tdPresent && m_lastDrawn + m_lastSkipped == tdDraw)
+            {
+                std::string first;
+                uint32_t resets = 0, maxv = 0;
+                const uint32_t reset = r.regs[0x2103];
+                for (uint32_t i = 0; i < count; i++)
+                {
+                    const uint32_t v = d.index32 ? indices[i * 4] | (indices[i * 4 + 1] << 8) | (indices[i * 4 + 2] << 16) | (uint32_t(indices[i * 4 + 3]) << 24)
+                                                 : uint32_t(indices[i * 2] | (indices[i * 2 + 1] << 8));
+                    resets += v == (d.index32 ? reset : reset & 0xFFFF) || v == (d.index32 ? 0xFFFFFFFFu : 0xFFFFu);
+                    maxv = std::max(maxv, v);
+                    if (i < 32)
+                        first += " " + std::to_string(v);
+                }
+                RuntimeLog("[draw] present %llu draw %u prim %u idx32 %d endian %u n %u reset %08X (%u hits) max %u mode %08X:%s\n", m_presented, tdDraw,
+                    d.primType, int(d.index32), d.indexEndian, count, reset, resets, maxv, r.regs[0x2205], first.c_str());
+            }
         }
         if (expand)
         {
@@ -2024,6 +2082,8 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         RuntimeLog("[pixel] draw %u vs %016llx ps %016llx rt %08X/%08X blend %08X fmt %u -> %.3f %.3f %.3f %.3f\n",
                             m_lastDrawn + m_lastSkipped - 1, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
                             r.regs[kRegRbColorInfo], r.regs[0x2201], uint32_t(td.Format), c[0], c[1], c[2], c[3]);
+                        RuntimeLog("[pixel]   cull %08X (mode %u ccw %u) vport xs %.3f ys %.3f vte %08X\n", r.regs[0x2205], HostCullMode(r.regs),
+                            uint32_t(HostFrontCounterClockwise(r.regs)), std::bit_cast<float>(r.regs[0x210F]), std::bit_cast<float>(r.regs[0x2111]), r.regs[0x2206]);
                         RuntimeLog("[pixel]   psbools %08X %08X %08X %08X loops %08X %08X\n", r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
                             r.regs[kRegBoolConstants + 6], r.regs[kRegBoolConstants + 7], r.regs[kRegLoopConstants + 16], r.regs[kRegLoopConstants + 31]);
                         lastValue = v;
