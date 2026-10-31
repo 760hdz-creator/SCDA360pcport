@@ -2104,7 +2104,8 @@ void D3D11Renderer::PollQueries()
         const bool lost = hr != S_OK && (hr != S_FALSE || now - p.ended > lag + 2000);
         if (hr != S_OK && !lost)
             return false;
-        const uint32_t guest = lost ? kOcclusionFallbackSamples : uint32_t(std::min<UINT64>(samples / std::max(p.samplesPerPixel, 1u), 0x7FFFFFFF));
+        static const bool allVisible = getenv("SCDA_QUERY_ALL_VISIBLE") != nullptr; // A/B: every query fully visible
+        const uint32_t guest = lost || allVisible ? kOcclusionFallbackSamples : uint32_t(std::min<UINT64>(samples / std::max(p.samplesPerPixel, 1u), 0x7FFFFFFF));
         const bool written = Frames().VisibleWrite([&] { return WriteOcclusionResult(p.address, p.generation, guest); });
         Frames().QueryAnswered();
         if (trace)

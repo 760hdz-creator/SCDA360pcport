@@ -85,6 +85,21 @@ Evidence paths under `_run/` are local only (git-ignored).
   downstream: with B saturated the floor is `min(1, mask.A)` = the sun term A (49a6d6fc REVSUB on G/A;
   on Jail b5531808 MIN only writes G), or from the post-material light passes. Next: dump the Jail mask's A
   (`SCDA_DUMP_RESOLVES`, 01EB2000 at 1620) and compare the window shapes with the 360 shot.
+- **Mask dumps (2026-10-31, `SCDA_DUMP_RESOLVES` + `SCDA_TRACE_FRAME=1619`, `_run/jres/`, `_run/jres2/`):** before
+  the copy the Jail mask's A is 255 on every pixel (clear 1 + additive b5531808 passes), so the copy's B is 1
+  everywhere. Sequence: mask clear -> point-light shadow maps (00DB2000, EDRAM 0x000-0x1BF, no overlap with
+  0x1C0) -> b5531808 passes (all blend 01010001, mask F) -> resolve -> copy cf73f1b6 -> character-shadow map +
+  6x 49a6d6fc (REVSUB G/A) -> blur. On Jail, 49a6d6fc's shadow map holds one guard silhouette (a character
+  shadow, not window light) and subtracts 0 here. Kinshasa 2400: clear -> resolve -> copy (no pass writes B)
+  -> 49a6d6fc/b5531808 MIN on G/A. Copy PS and its fetch (zyxw) are identical on both maps.
+- **Window patches are baked:** the Jail floor binds a real s13 (02882000, DXT1 512x512); its B channel holds
+  the window-grid light pattern (`_run/jtex/s13.png`). The cookie s5 (04C46000) really is a round spot. The
+  material scales the shadowed light by `min(mask.B + s13.ch, mask.A)`, so the baked pattern shows only where
+  mask.B is ~0. With B = 1 (our clear alpha) every baked shadow is swamped, on every map.
+  So the console baseline B is probably 0. Kinshasa's ground then needs another source: its 363 draws
+  bind the default black s13 (036FA000). Next suspect: missing lightmaps (the title binds the default when a
+  lightmap is not loaded/streamed). Check which Kinshasa ground draws should have a real s13.
+  `SCDA_QUERY_ALL_VISIBLE=1` (all occlusion queries visible) changed nothing on Jail.
 - **Ruled out:** negative light alpha (PS b5531808 outputs `0.111 * sum(shadow tests * c2.y * cookie)` >= 0,
   c2 = (0, .8, 0, 0), so the unclamped-source idea does not apply). Alias off (`SCDA_NO_DEPTH_COLOR_ALIAS=1`)
   shows Jail patches, but only because rows 0-352 keep the previous frame's mask. Kinshasa then gets a black
