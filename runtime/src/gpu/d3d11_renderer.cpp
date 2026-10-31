@@ -1166,6 +1166,10 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         // apart, mips generated. They were never bound, so every cube fetch read 0 (environment
         // reflections on water, glass and shiny walls/floors). SCDA_NO_CUBE=1: old behaviour (A/B).
         static const bool noCube = getenv("SCDA_NO_CUBE") != nullptr;
+        static const bool trace3D = getenv("SCDA_TRACE_CUBE") != nullptr;
+        static std::unordered_set<uint32_t> seen3D;
+        if (trace3D && t.dimension == 2 && seen3D.insert(t.physical).second)
+            RuntimeLog("[tex3d] %08X fmt %u %ux%ux%u tiled %d (not bound)\n", t.physical, t.format, t.width, t.height, t.depth, t.tiled);
         if (t.dimension == 3 && !noCube)
         {
             cubeSrvs[slot] = CubeView(m_device, m_context, r, regs, slot, t, m_presented);

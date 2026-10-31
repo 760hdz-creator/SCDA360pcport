@@ -1,7 +1,25 @@
-# Remaining bugs (2026-10-30)
+# Remaining bugs (2026-10-31)
 
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
+
+## FIXED. Black reflections on water, glass, metal and shiny floors (2026-10-31)
+
+- **Symptom:** dull/grey water (NY boat), window glass without its reflection layer (Cozumel cabin), flat metal.
+- **Cause:** cube textures (fetch dimension 3) were never bound; every `tfetchCube` read 0. 71 of 464 game shaders
+  sample a cube map.
+- **Fix:** six faces one `TextureCubeFaceBytes` apart (Xenia layout) into a `TextureCube` at t64+, mips generated.
+  `SCDA_NO_CUBE=1` (A/B), `SCDA_TRACE_CUBE=1`. Real 3D textures: none seen on Intro/Kinshasa01/Okhotsk_01/Jail.
+
+## FIXED. Draws lost to shader compile failures (2026-10-31)
+
+- **Cozumel ocean black:** water PS d5defa8e runs CUBEv on a float constant; the translator printed `r255`.
+- **Okhotsk_02 underwater pass, HQ_05_B:** loop shaders referenced undeclared `iN`; loop constants now read
+  `g_Loops` (count, aL start, step).
+- **Hotel particles:** point lists were skipped; now expanded to sprites (geometry shader) with param gen.
+- **Offline check:** `SCDA_SHADER_SWEEP=<dir> scda_tests` compiles every `*.ps.bin` / `*.vs.bin` under dir.
+  Microcode from the `.lin` packages: inflate, then each container at magic `102A1100` (pixel) / `102A1101`
+  (vertex), microcode at container + virtualSize + shader.physicalOffset. `SCDA_TRACE_SKIP=1` logs skipped draws.
 
 ## FIXED. Dark band over the last 16 screen rows (NY boat, Hotel) (2026-10-31)
 
