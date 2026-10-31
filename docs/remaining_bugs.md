@@ -12,7 +12,7 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** Xenia's fields; translator v17. `SCDA_VFETCH_OLD_SIGN=1` restores the old decode (A/B). Verified
   `_run/kv3/` vs `_run/kv/` (same autopress view).
 
-## OPEN. Dark interiors darker than the 360 playthrough (Jail cell) (2026-10-31)
+## NOT A BUG. Dark interiors darker than the 360 playthrough (Jail cell) (2026-10-31)
 
 - **Evidence (frame means, 640x360, ours vs 360 video):** Jail cell 13,15,15 vs 19-20,26-27,24-25; Kinshasa00 room
   37,34,21 vs 44,43,23; HUD and NY night sky match (29,34,32 vs 27,33,28; 13,23,49 vs 13,24,49).
@@ -20,8 +20,10 @@ Evidence paths under `_run/` are local only (git-ignored).
   title's ramp toe is not simply wrong; the sky matched with it on. Not changed.
 - **Pixel watch (Jail wall, guest 1000,250):** only the material pass PS 63053924 writes it (0.079), PS bools
   0x7250 (b132, b134, b137, b140-142); no additive light passes. Lights are in-shader, enabled by bools b128-b142.
-- **Next:** decide whether the reference capture (Xbox One X back-compat, YouTube) is a trustworthy brightness
-  reference before touching the ramp; compare against a second capture.
+- **Resolved:** two other 360 captures of the same opening shot (YouTube qOaKDvKST_Q at 2 s, 0pdqundUhtU at 38 s)
+  measure 13,15,16 and 11,18,15 against ours 15,19,19 (gamma ramp on). The playthrough used first (kJJN2OoDyrE,
+  Xbox One X back-compat) is brighter than a 360; do not use it for absolute brightness. That also weakens the
+  statue measurement below.
 
 ## OPEN. NY Statue of Liberty pedestal dimmer than the 360 (2026-10-31)
 
