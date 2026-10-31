@@ -302,6 +302,17 @@ static void ElementGrid(const TextureFetch& t, uint32_t& pitch, uint32_t& height
     height = (t.height + b - 1) / b;
 }
 
+// Bytes between cube faces (array slices): the 32-aligned element grid (tiled) or the plain one,
+// rounded up to 4 KB (Xenia texture_util GetGuestTextureLayout).
+uint32_t TextureCubeFaceBytes(const TextureFetch& t)
+{
+    uint32_t pitch, height;
+    ElementGrid(t, pitch, height);
+    if (t.tiled)
+        pitch = Align32(pitch), height = Align32(height);
+    return (pitch * height * TextureElementBytes(t.format) + 4095) & ~4095u;
+}
+
 uint32_t TextureGuestBytes(const TextureFetch& t)
 {
     uint32_t bytes = TextureElementBytes(t.format), pitch, height;

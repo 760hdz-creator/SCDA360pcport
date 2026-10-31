@@ -408,6 +408,14 @@ struct DrawResources
     // Per frame: guest ranges already uploaded, textures by fetch constant.
     std::unordered_map<uint64_t, uint32_t> uploaded; // range key -> Frame::memory snapshot in the buffer
     std::unordered_map<uint64_t, ComPtr<ID3D11ShaderResourceView>> textures;
+    // Cube textures (fetch dimension 3) by fetch constant, re-made when the faces' guest bytes change.
+    struct CubeEntry
+    {
+        ComPtr<ID3D11ShaderResourceView> srv;
+        uint64_t hash = 0;
+        uint64_t checkedAt = ~0ull;
+    };
+    std::unordered_map<uint64_t, CubeEntry> cubes;
     // Converted textures across frames by fetch constant, reused while the guest bytes hash the same.
     struct CachedTexture
     {
@@ -692,6 +700,72 @@ constexpr size_t kMaxEdramTargets = 64;
 
 // The host target for an EDRAM colour surface, created (cleared to 0) on first use; null on failure.
 // 64-bit content hash (4 independent multiply-xor lanes); never 0.
+static uint64_t HashBytes(const uint8_t* p, size_t n);
+
+// The TextureCube for a cube fetch constant (see the texture loop). Faces are hashed once per present.
+static ID3D11ShaderResourceView* CubeView(ID3D11Device* device, ID3D11DeviceContext* context, DrawResources& r, const RegisterFile& regs,
+    uint32_t slot, const TextureFetch& t, uint64_t presented)
+{
+    if (!TextureElementBytes(t.format) || !t.width || !t.height || t.width != t.height)
+        return nullptr;
+    uint64_t key = 0xC0BEull;
+    for (uint32_t i = 0; i < 6; i++)
+        key = (key ^ regs[kRegFetchConstants + slot * 6 + i]) * 1099511628211ull;
+    auto& e = r.cubes[key];
+    if (e.srv && e.checkedAt == presented)
+        return e.srv.Get();
+    const uint32_t faceBytes = TextureCubeFaceBytes(t);
+    const uint8_t* guest = PhysicalPtr(t.physical);
+    if (!GuestRangeReadable(guest, size_t(faceBytes) * 5 + TextureGuestBytes(t)))
+        return e.srv.Get();
+    const uint64_t hash = HashBytes(guest, size_t(faceBytes) * 5 + TextureGuestBytes(t));
+    e.checkedAt = presented;
+    if (e.srv && e.hash == hash)
+        return e.srv.Get();
+    const bool isFloat = IsFloatTextureFormat(t.format);
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = t.width;
+    td.Height = t.height;
+    td.MipLevels = 0; // full chain, generated
+    td.ArraySize = 6;
+    td.Format = isFloat ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    td.MiscFlags = D3D11_RESOURCE_MISC_TEXTURECUBE | D3D11_RESOURCE_MISC_GENERATE_MIPS;
+    ComPtr<ID3D11Texture2D> tex;
+    ComPtr<ID3D11ShaderResourceView> srv;
+    if (FAILED(device->CreateTexture2D(&td, nullptr, &tex)) || FAILED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
+        return e.srv.Get();
+    D3D11_TEXTURE2D_DESC made;
+    tex->GetDesc(&made);
+    for (uint32_t face = 0; face < 6; face++)
+    {
+        TextureFetch f = t;
+        f.physical = t.physical + face * faceBytes;
+        f.dimension = 1;
+        const uint8_t* g = PhysicalPtr(f.physical);
+        const UINT sub = D3D11CalcSubresource(0, face, made.MipLevels);
+        if (isFloat)
+        {
+            std::vector<float> texels = ConvertTextureFloat(f, g);
+            context->UpdateSubresource(tex.Get(), sub, nullptr, texels.data(), t.width * 16, 0);
+        }
+        else
+        {
+            std::vector<uint32_t> texels = ConvertTexture(f, g);
+            context->UpdateSubresource(tex.Get(), sub, nullptr, texels.data(), t.width * 4, 0);
+        }
+    }
+    context->GenerateMips(srv.Get());
+    static const bool trace = getenv("SCDA_TRACE_CUBE") != nullptr;
+    if (trace)
+        RuntimeLog("[cube] %08X fmt %u %ux%u tiled %d face stride %u (re)made\n", t.physical, t.format, t.width, t.height, t.tiled, faceBytes);
+    e.srv = srv;
+    e.hash = hash;
+    return e.srv.Get();
+}
+
 static uint64_t HashBytes(const uint8_t* p, size_t n)
 {
     uint64_t h[4] = { 0x9E3779B97F4A7C15ull, 0xC2B2AE3D27D4EB4Full, 0x165667B19E3779F9ull, 0x27D4EB2F165667C5ull };
@@ -1079,6 +1153,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     // Textures: every texture fetch constant the stages might sample (the shader's slots are not
     // known here), converted on the CPU once per frame.
     ID3D11ShaderResourceView* srvs[32];
+    ID3D11ShaderResourceView* cubeSrvs[32] = {};
     for (uint32_t slot = 0; slot < 32; slot++)
     {
         srvs[slot] = r.white.Get();
@@ -1087,6 +1162,15 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         TextureFetch t = DecodeTextureFetch(regs, slot);
         if (!t.valid)
             continue;
+        // Cube textures (dimension 3) bind at g_TexCube (t64+): six faces one TextureCubeFaceBytes
+        // apart, mips generated. They were never bound, so every cube fetch read 0 (environment
+        // reflections on water, glass and shiny walls/floors). SCDA_NO_CUBE=1: old behaviour (A/B).
+        static const bool noCube = getenv("SCDA_NO_CUBE") != nullptr;
+        if (t.dimension == 3 && !noCube)
+        {
+            cubeSrvs[slot] = CubeView(m_device, m_context, r, regs, slot, t, m_presented);
+            continue;
+        }
         if (TraceResolveFrame(m_presented))
         {
             auto hit = r.resolved.find(t.physical);
@@ -1332,7 +1416,10 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
             srvs[slot] = it->second.Get();
     }
     for (auto set : { &ID3D11DeviceContext::VSSetShaderResources, &ID3D11DeviceContext::PSSetShaderResources })
+    {
         (m_context->*set)(kHlslTex2DSlot, 32, srvs);
+        (m_context->*set)(kHlslTex2DSlot + 64, 32, cubeSrvs);
+    }
 
     // Samplers s0-s15 from fetch constants 0-15 (the translator indexes samplers by fetch slot & 15).
     ID3D11SamplerState* samplers[16];

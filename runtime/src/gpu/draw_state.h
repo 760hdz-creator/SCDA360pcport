@@ -92,6 +92,7 @@ TextureFetch TextureMipLevel(const TextureFetch& t, uint32_t level);
 uint32_t TextureElementBytes(uint32_t format);
 // Guest bytes the texture occupies (tiled: 32x32 elements aligned).
 uint32_t TextureGuestBytes(const TextureFetch& t);
+uint32_t TextureCubeFaceBytes(const TextureFetch& t); // stride between the 6 faces of a cube texture
 // Texel index of (x, y) in a tiled surface of the given pitch (texels).
 uint32_t TiledTexelIndex(uint32_t x, uint32_t y, uint32_t pitch, uint32_t log2Bpp);
 // Guest texture bytes (big-endian, as in memory) -> width*height RGBA8 with endian + swizzle applied.
