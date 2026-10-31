@@ -1495,7 +1495,14 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     constexpr uint64_t kGoggleNoisePs = 0x40f6f3d3c2f9b7e6ull, kThermalPalettePs = 0x7439e53c553bfde7ull;
     static const bool cleanEnv = getenv("SCDA_CLEAN_GOGGLES") != nullptr;
     const bool clean = m_cleanGoggles || cleanEnv;
-    const bool skipped = (d.vs && d.ps &&
+    // Sniper scope: the last post pass (PS 3a7a1a91) blends the 640x360 light mask over the bottom
+    // fifth of the screen with alpha a * 2 * (5y - 4). The mask's aliased depth-1 clear reads (0,1,1,1)
+    // here, which is what lights the ground in normal frames, so the pass laid a cyan band under the
+    // scope; the 360 shows nothing there (360 playthrough, Kinshasa scope shots). shortcut: the pass is
+    // skipped instead of finding why its input is transparent on the console. SCDA_SCOPE_BAND=1 draws it.
+    constexpr uint64_t kScopeBandPs = 0x3a7a1a91e12b339aull;
+    static const bool keepScopeBand = getenv("SCDA_SCOPE_BAND") != nullptr;
+    const bool skipped = (d.ps && d.ps->hash == kScopeBandPs && !keepScopeBand) || (d.vs && d.ps &&
         std::find_if(skipShaders.begin(), skipShaders.end(), [&](uint64_t h) { return h == d.vs->hash || h == d.ps->hash; }) != skipShaders.end()) ||
         (clean && d.vs && d.ps && d.vs->hash == kGoggleOverlayVs && d.ps->hash == kGoggleOverlayPs);
     // PS constant to zero for this draw (component mask), 0 = none.

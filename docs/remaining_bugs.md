@@ -44,8 +44,9 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** `AliasedClearColor` writes the real dword (stencil in R, 24 depth bits in G/B/A, Xenia's D24S8 and 8_8_8_8
   layouts) via the blend factor and a no-kill PS. Clears at depth 0 still give 0. Verified on Kinshasa01 frame 2400
   (`_run/k1c/` against `_run/k1b/` before). Trace: `SCDA_TRACE_DEPTH_ALIAS=1` (or `=<frame>` for every one in a frame).
-- **Regressed:** the sniper-scope bottom band (below) shows cyan again. The scope frame's blur pass (PS b1649a4c)
-  reads this mask; putting stencil in A instead removed the band but shadowed the ground again.
+- **Scope band:** came back with the real clear colour; the 360 shows no band under the scope (Kinshasa scope shots
+  in the 360 playthrough), so the band pass (PS 3a7a1a91) is skipped (`SCDA_SCOPE_BAND=1` draws it). Why its input is
+  transparent on the console is not known.
 
 ## FIXED. Scale 2+ showed stale tiles (2026-10-30)
 
@@ -56,7 +57,7 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** the most recently copied containing texture wins (`Resolved::lastCopy`). Verified on Intro frames
   380-440 at Scale 2 (`_run/s2/seq2/`); same frames froze before (`_run/s2/seq/`).
 
-## PARTLY OPEN. Sniper scope: cyan band and pink rows at the bottom of the screen (2026-10-31)
+## FIXED (shortcut). Sniper scope: cyan band and pink rows at the bottom of the screen (2026-10-31)
 
 - **Symptom:** in Kinshasa scope view, the bottom ~20% of the screen turned flat cyan `(0,198,198)`, green over the
   scope body, and the last 5 rows pink. (The purple lens was fixed earlier by the resolve-container fix.)
