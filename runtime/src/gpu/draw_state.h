@@ -98,7 +98,7 @@ uint32_t TextureGuestBytes(const TextureFetch& t);
 uint32_t TextureCubeFaceBytes(const TextureFetch& t); // stride between the 6 faces of a cube texture
 // Texel index of (x, y) in a tiled surface of the given pitch (texels).
 uint32_t TiledTexelIndex(uint32_t x, uint32_t y, uint32_t pitch, uint32_t log2Bpp);
-// Live A/B switches for bugs only reproducible in play (SCDA_DEBUG_KEYS=1: F9 / F10 in the game window).
+// Live A/B switches for bugs only reproducible in play (SCDA_DEBUG_KEYS=1: F9 / F11 in the game window; SCDA_QUERY_ALL_VISIBLE=1 / SCDA_NO_CULL=1 at start).
 // g_debugQueriesVisible: every occlusion query answers fully visible; g_debugNoCull: no back-face culling.
 extern std::atomic<bool> g_debugQueriesVisible, g_debugNoCull;
 
@@ -163,6 +163,7 @@ uint32_t HostTopology(uint32_t primType);
 inline bool NeedsTriangleListExpansion(uint32_t primType) { return primType == 5 || primType == 13; }
 // Fan (v0, vi, vi+1) or quad list (a b c, a c d) indices -> triangle list indices.
 std::vector<uint32_t> ExpandToTriangleList(uint32_t primType, const std::vector<uint32_t>& indices);
+
 
 // RB_COLOR_INFO format (bits 16-19) -> DXGI_FORMAT of its host render target: 8_8_8_8(_GAMMA)
 // RGBA8, 32_FLOAT R32, 32_32_FLOAT R32G32, everything else (2_10_10_10 variants, 16-bit) RGBA16F.
