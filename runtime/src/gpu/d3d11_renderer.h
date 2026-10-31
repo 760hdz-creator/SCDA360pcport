@@ -48,6 +48,8 @@ public:
     const RegisterFile& Registers() const;
     // [Display] CleanGoggles: drop the goggle scanline overlay and the noise displacement.
     void SetCleanGoggles(bool on) { m_cleanGoggles = on; }
+    // [Display] DrawBackFaces: no back-face culling for opaque, non-stencil draws.
+    void SetDrawBackFaces(bool on) { m_drawBackFaces = on; }
     // Reads one texel (as RGBA8) of the last RT0 drawn or resolved (tests); 0 when unavailable.
     uint32_t ReadTargetTexel(uint32_t x, uint32_t y);
     // Post-processing of the presented frame (F1 menu): FXAA at the internal resolution, Lanczos
@@ -105,6 +107,7 @@ private:
     bool m_vsync = true;
     uint32_t m_scale = 1, m_anisotropy = 1;
     bool m_cleanGoggles = false;
+    bool m_drawBackFaces = true;
     uint64_t m_presented = 0;
     uint32_t m_lastDrawn = 0, m_lastSkipped = 0, m_lastResolved = 0;
     bool m_lastFrontbuffer = false;

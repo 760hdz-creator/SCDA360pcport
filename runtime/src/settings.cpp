@@ -87,6 +87,8 @@ DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini)
         }
         else if (key == "cleangoggles")
             s.cleanGoggles = Truthy(value);
+        else if (key == "drawbackfaces")
+            s.drawBackFaces = Truthy(value);
         else if (key == "antialiasing")
         {
             if (value == "off") s.antiAliasing = DisplaySettings::AaOff;

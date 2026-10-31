@@ -13,6 +13,9 @@ struct DisplaySettings
     // Quality of life, off by default (authentic): goggle vision modes without the scanline overlay
     // and without the thermal/EMF noise displacement ([Display] CleanGoggles=1).
     bool cleanGoggles = false;
+    // Opaque surfaces drawn from both sides ([Display] DrawBackFaces=1, default on): one-sided walls
+    // stay solid when the camera is inside them (Iceland shack). 0 = the console's culling.
+    bool drawBackFaces = true;
     // Post-processing on the presented frame (F1 menu, Graphics). Defaults leave the image as the
     // console made it. The game's own 4x MSAA is always on.
     enum AntiAliasing { AaOff, AaFxaa } antiAliasing = AaOff; // [Display] AntiAliasing=Off|FXAA
