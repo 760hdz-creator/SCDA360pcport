@@ -224,9 +224,10 @@ SCDA_IMPORT(XamInputGetState)
         return ParseAutoPress(env);
     }();
     static const InputSettings mouse = LoadInputSettings(SettingsPath());
-    XINPUT_GAMEPAD g;
-    PadKind kind;
-    bool connected = PadGetState(g, &kind);
+    XINPUT_GAMEPAD g{};
+    PadKind kind = PadKind::None;
+    // A scripted run ignores the physical pad as well, so A/B runs stay identical.
+    bool connected = script.empty() && PadGetState(g, &kind);
     const bool padActive = connected && (g.wButtons || g.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD ||
         g.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD || !StickIdle(g.sThumbLX, g.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) ||
         !StickIdle(g.sThumbRX, g.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE));
