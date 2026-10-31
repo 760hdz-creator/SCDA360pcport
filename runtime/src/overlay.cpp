@@ -76,6 +76,7 @@ void Apply(const DisplaySettings& s)
     g_renderer->SetVsync(s.vsync);
     g_renderer->SetAnisotropy(s.anisotropy);
     g_renderer->SetCleanGoggles(s.cleanGoggles);
+    g_renderer->SetDrawBackFaces(s.drawBackFaces);
 }
 
 // Writes the keys that changed.
@@ -93,6 +94,8 @@ void Save(const DisplaySettings& before, const DisplaySettings& after)
         save("Anisotropy", std::to_string(after.anisotropy));
     if (before.cleanGoggles != after.cleanGoggles)
         save("CleanGoggles", after.cleanGoggles ? "1" : "0");
+    if (before.drawBackFaces != after.drawBackFaces)
+        save("DrawBackFaces", after.drawBackFaces ? "1" : "0");
     if (before.antiAliasing != after.antiAliasing)
         save("AntiAliasing", AntiAliasingName(after.antiAliasing));
     if (before.sharpening != after.sharpening)
@@ -185,6 +188,9 @@ void GraphicsTab(DisplaySettings& s)
         s.upscaling = DisplaySettings::Upscaling(up);
     Hint("FSR 1-style: picks the internal resolution from the window height divided by the mode's ratio "
          "(in 720-row steps), then upscales with a Lanczos filter, or filters down when it is larger. The menu stays sharp.");
+    ImGui::Checkbox("Solid walls from inside", &s.drawBackFaces);
+    Hint("Draws opaque surfaces from both sides, so one-sided walls stay solid when the camera is inside a building "
+         "(Iceland). Off = the console's culling.");
     const uint32_t scale = EffectiveScale(s);
     const uint32_t w = g_renderer->Width(), h = g_renderer->Height();
     const char* how = 720 * scale > h ? "filtered down" : 720 * scale < h ? (s.upscaling != DisplaySettings::UpOff ? "Lanczos upscale" : "bilinear") : "1:1";

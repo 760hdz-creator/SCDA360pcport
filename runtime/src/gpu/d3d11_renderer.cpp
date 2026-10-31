@@ -1161,7 +1161,10 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     // SCDA_NO_CULL=<present>: culling off from that present on (same camera before/after); =1: from the start.
     static const uint64_t noCullFrom = getenv("SCDA_NO_CULL") ? strtoull(getenv("SCDA_NO_CULL"), nullptr, 10) : 0;
     const bool noCull = g_debugNoCull ? noCullFrom <= 1 || m_presented >= noCullFrom : false;
-    uint32_t cull = noCull ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
+    // DrawBackFaces: opaque draws (no blending) without stencil keep both sides; the depth pass resolves
+    // them. Blended passes and stencil tricks (light volumes, shadows) keep the title's culling.
+    const bool backFaces = m_drawBackFaces && !b.enable && !(regs[0x2200] & 1);
+    uint32_t cull = noCull || backFaces ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
     auto& raster = r.raster[cull | (ccw << 4) | (noClip << 5)];
     if (!raster)
     {
