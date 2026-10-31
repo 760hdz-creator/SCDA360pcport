@@ -33,7 +33,22 @@ cbuffer SharedConstants : register(b2)
     float2 g_PositionScale;  // 1 / (internal resolution scale x MSAA samples) per axis: SV_Position -> guest pixels
     float g_PointSize;       // constant point sprite diameter (guest pixels)
     uint g_PointMinMax;      // PA_SU_POINT_MINMAX raw
+    uint4 g_TexSwizzle[8];   // per fetch slot: 0 = none, else 0x1000 | fetch swizzle (resolve copies)
 };
+// Fetch-constant swizzle for textures bound raw (resolve copies): 0-3 = X-W, 4 = 0, 5 = 1.
+float4 TexSwizzle(float4 v, uint t)
+{
+    const uint s = g_TexSwizzle[t >> 2][t & 3];
+    if (s == 0)
+        return v;
+    float4 o;
+    [unroll] for (uint i = 0; i < 4; i++)
+    {
+        const uint c = (s >> (i * 3)) & 7;
+        o[i] = c < 4 ? v[c] : c == 5 ? 1.0 : 0.0;
+    }
+    return o;
+}
 uint g_SpecConstants() { return g_SpecConstantsValue; }
 // Alpha test against RB_ALPHA_REF: < 0 = kill (fed to clip()).
 float XenosAlphaTest(float a)
@@ -100,8 +115,8 @@ float2 Dims2D(Texture2D<float4> t)
 #define SAMPLE(tex, s, c) tex.Sample(s, c)
 #endif
 // 1D textures are bound as one-row 2D textures (DecodeTextureFetch: height 1).
-#define tfetch1D(t, s, u) SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], float2(u, 0.5))
-#define tfetch2D(t, s, uv, off) SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], (uv) + (off) / Dims2D(g_Tex2D[t]))
+#define tfetch1D(t, s, u) TexSwizzle(SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], float2(u, 0.5)), t)
+#define tfetch2D(t, s, uv, off) TexSwizzle(SAMPLE(g_Tex2D[t], g_Samp[(s) & 15], (uv) + (off) / Dims2D(g_Tex2D[t])), t)
 #define tfetch2DBicubic(t, s, uv, off) tfetch2D(t, s, uv, off)
 #define getWeights2D(t, s, uv, off) (isnan(uv) ? 0.0 : frac((uv) * Dims2D(g_Tex2D[t]) + (off) - 0.5))
 // A 3D fetch of a 2D texture reads slice 0: the 2D binding (g_Tex3D itself is never bound).
@@ -110,7 +125,7 @@ float2 Dims2D(Texture2D<float4> t)
 #define getPixelCoord(t, uv) (Dims2D(g_Tex2D[t]) * (uv))
 // Register LOD (SetTextureLod + use_register_lod): an explicit mip level.
 #define SAMPLE_LOD(tex, s, c, l) tex.SampleLevel(s, c, l)
-#define tfetch2DLod(t, s, uv, off, l) SAMPLE_LOD(g_Tex2D[t], g_Samp[(s) & 15], (uv) + (off) / Dims2D(g_Tex2D[t]), l)
+#define tfetch2DLod(t, s, uv, off, l) TexSwizzle(SAMPLE_LOD(g_Tex2D[t], g_Samp[(s) & 15], (uv) + (off) / Dims2D(g_Tex2D[t]), l), t)
 #define tfetch3DLod(t, s, uvw, l) ((g_Tex3DIs2D >> (t)) & 1 ? SAMPLE_LOD(g_Tex2D[t], g_Samp[(s) & 15], (uvw).xy, l) : SAMPLE_LOD(g_Tex3D[t], g_Samp[(s) & 15], uvw, l))
 #define tfetchCubeLod(t, s, uvw, cmd, l) SAMPLE_LOD(g_TexCube[t], g_Samp[(s) & 15], (uvw).z ? (cmd).cubeMapDirections[1] : (cmd).cubeMapDirections[0], l)
 

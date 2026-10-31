@@ -35,9 +35,11 @@ struct SharedConstants
     float positionScale[2];
     float pointSize;      // constant point sprite diameter, guest pixels (PA_SU_POINT_SIZE)
     uint32_t pointMinMax; // PA_SU_POINT_MINMAX raw
-
+    // Per fetch slot: 0 = texels already swizzled (CPU-converted textures), else 0x1000 | the fetch
+    // constant's 12-bit swizzle, applied in the shader (resolve copies are bound raw).
+    uint32_t texSwizzle[32];
 };
-static_assert(sizeof(SharedConstants) == 1024 && sizeof(SharedConstants) % 16 == 0);
+static_assert(sizeof(SharedConstants) == 1152 && sizeof(SharedConstants) % 16 == 0);
 static_assert(offsetof(SharedConstants, fetch) == 160 && offsetof(SharedConstants, specConstants) == 928);
 static_assert(offsetof(SharedConstants, vte) == 944 && offsetof(SharedConstants, vpOffset) == 960);
 
