@@ -961,6 +961,10 @@ void D3D11Renderer::ApplyRegisterWrites(const Frame& frame, size_t end)
         }
         else
         {
+            // SCDA_TRACE_CULL=<present>: every PA_SU_SC_MODE_CNTL write in that present, with the next draw number.
+            static const unsigned long long traceCull = getenv("SCDA_TRACE_CULL") ? strtoull(getenv("SCDA_TRACE_CULL"), nullptr, 10) : 0;
+            if (traceCull && m_presented == traceCull && w.index == 0x2205 && w.value != r.regs[0x2205])
+                RuntimeLog("[cull] present %llu before draw %u: %08X -> %08X (write %zu)\n", m_presented, m_lastDrawn + m_lastSkipped, r.regs[0x2205], w.value, r.applied);
             r.regs.Set(w.index, w.value);
             if (w.index - kRegAluConstants < 2048)
                 r.aluDirty[(w.index - kRegAluConstants) >> 10] = true;
@@ -1628,6 +1632,19 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             m_lastDrawn + m_lastSkipped, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
             r.regs[kRegRbColorInfo], r.regs[0x2201], r.regs[0x2104], r.regs[0x2200], r.regs[kRegRbDepthInfo], r.regs[0x2206], r.regs[0x2113],
             r.regs[0x2114], r.regs[0x2080], r.regs[0x2205], r.regs[0x2204], r.regs[0x2202], r.regs[0x210E], d.indexBase, d.indexCount, used.c_str());
+        // SCDA_TRACE_VSC=<vs hash hex>[,..]: draws with one of those VS also log VS c8-c17 (transforms).
+        static const std::vector<uint64_t> traceVscList = []
+        {
+            std::vector<uint64_t> v;
+            for (const char* p = getenv("SCDA_TRACE_VSC"); p && *p; p += strcspn(p, ",") + (p[strcspn(p, ",")] ? 1 : 0))
+                v.push_back(strtoull(p, nullptr, 16));
+            return v;
+        }();
+        if (std::find(traceVscList.begin(), traceVscList.end(), d.vs->hash) != traceVscList.end())
+            for (uint32_t c = 8; c < 18; c++)
+                RuntimeLog("[rtrace]   vc%u %g %g %g %g\n", c, std::bit_cast<float>(r.regs[kRegAluConstants + c * 4]),
+                    std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 1]), std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 2]),
+                    std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 3]));
         // SCDA_TRACE_PS=<ps hash hex>[,..]: draws with one of those PS also log PS c0-c7 and blend control.
         static const std::vector<uint64_t> tracePsList = []
         {
@@ -1911,7 +1928,20 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             m_device->CreateRasterizerState(&rd, &noCull);
         }
         m_context->PSSetShader(facePs.Get(), nullptr, 0);
-        m_context->RSSetState(noCull.Get());
+        // The draw's own front face (red = front by the title's PA_SU_SC_MODE_CNTL), culling off.
+        static ComPtr<ID3D11RasterizerState> noCullBy[2];
+        const bool ccwFront = HostFrontCounterClockwise(r.regs);
+        if (!noCullBy[ccwFront])
+        {
+            D3D11_RASTERIZER_DESC rd{};
+            rd.FillMode = D3D11_FILL_SOLID;
+            rd.CullMode = D3D11_CULL_NONE;
+            rd.FrontCounterClockwise = ccwFront;
+            rd.DepthClipEnable = TRUE;
+            m_device->CreateRasterizerState(&rd, &noCullBy[ccwFront]);
+        }
+        m_context->RSSetState(noCullBy[ccwFront].Get());
+        (void)noCull;
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         if (!faceVs && !facePsHash) RuntimeLog("[face] present %llu draw %u vs %016llx: facing shader\n", m_presented, faceDrawIndex, (unsigned long long)d.vs->hash);
     }
@@ -1937,6 +1967,32 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             indices.resize(d.indexBytes);
             SwapIndices(frame.memory[d.indexSnapshot].bytes.data(), d.indexBytes, d.indexEndian, indices.data());
             count = std::min(d.indexCount, d.indexBytes / (d.index32 ? 4 : 2));
+            // SCDA_DUMP_STRIPS=<dir>,<present>: every DMA triangle strip with primitive reset in that present,
+            // as <dir>/d<draw>_<vs>.idx (u32 indices, reset value as is), for offline winding analysis.
+            static unsigned long long dsPresent = 0;
+            static const std::string dsDir = [&]
+            {
+                const char* e = getenv("SCDA_DUMP_STRIPS");
+                if (!e || !strchr(e, ','))
+                    return std::string();
+                dsPresent = strtoull(strchr(e, ',') + 1, nullptr, 10);
+                return std::string(e, strchr(e, ',') - e);
+            }();
+            if (!dsDir.empty() && m_presented == dsPresent && d.primType == 6 && (r.regs[0x2205] & (1u << 21)))
+            {
+                char name[128];
+                snprintf(name, sizeof(name), "/d%05u_%016llx_%08X.idx", m_lastDrawn + m_lastSkipped, (unsigned long long)d.vs->hash, r.regs[0x2205]);
+                if (FILE* f = fopen((dsDir + name).c_str(), "wb"))
+                {
+                    for (uint32_t i = 0; i < count; i++)
+                    {
+                        const uint32_t v = d.index32 ? indices[i * 4] | (indices[i * 4 + 1] << 8) | (indices[i * 4 + 2] << 16) | (uint32_t(indices[i * 4 + 3]) << 24)
+                                                     : uint32_t(indices[i * 2] | (indices[i * 2 + 1] << 8));
+                        fwrite(&v, 4, 1, f);
+                    }
+                    fclose(f);
+                }
+            }
             // SCDA_TRACE_DRAW=<present>,<draw>: that draw's primitive, restart state and first indices.
             static unsigned long long tdPresent = 0;
             static unsigned tdDraw = 0;
