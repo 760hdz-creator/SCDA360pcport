@@ -53,6 +53,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HoldCursor(hwnd, !open && GetForegroundWindow() == hwnd);
         return 0;
     }
+    // SCDA_DEBUG_KEYS=1: F9 occlusion queries all visible, F10 culling off (draw_state.h), toggled live.
+    static const bool debugKeys = getenv("SCDA_DEBUG_KEYS") != nullptr;
+    if (debugKeys && msg == WM_KEYDOWN && !(lp & (1 << 30)) && (wp == VK_F9 || wp == VK_F10))
+    {
+        std::atomic<bool>& flag = wp == VK_F9 ? g_debugQueriesVisible : g_debugNoCull;
+        flag = !flag;
+        RuntimeLog("[debug] %s: %s\n", wp == VK_F9 ? "queries all visible (F9)" : "culling off (F10)", flag ? "on" : "off");
+        return 0;
+    }
     if (OverlayWndProc(hwnd, msg, wp, lp))
         return 0;
     switch (msg)

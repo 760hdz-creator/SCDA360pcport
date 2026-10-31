@@ -1,6 +1,7 @@
 // Register state -> what the D3D11 renderer binds: shader constants, vertex memory ranges,
 // textures and primitive topology. Pure functions (no D3D), unit tested.
 #pragma once
+#include <atomic>
 #include <bitset>
 #include <cstddef>
 #include <string>
@@ -97,6 +98,10 @@ uint32_t TextureGuestBytes(const TextureFetch& t);
 uint32_t TextureCubeFaceBytes(const TextureFetch& t); // stride between the 6 faces of a cube texture
 // Texel index of (x, y) in a tiled surface of the given pitch (texels).
 uint32_t TiledTexelIndex(uint32_t x, uint32_t y, uint32_t pitch, uint32_t log2Bpp);
+// Live A/B switches for bugs only reproducible in play (SCDA_DEBUG_KEYS=1: F9 / F10 in the game window).
+// g_debugQueriesVisible: every occlusion query answers fully visible; g_debugNoCull: no back-face culling.
+extern std::atomic<bool> g_debugQueriesVisible, g_debugNoCull;
+
 // FNV-1a 64 over level 0 of a DXT texture: its 4x4 blocks in row order, endian-swapped to the
 // little-endian layout of a DDS file (tiling and address do not matter). 0 for other formats.
 uint64_t BlockLinearHash(const TextureFetch& t, const uint8_t* guest);
