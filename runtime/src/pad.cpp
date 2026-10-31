@@ -11,6 +11,7 @@
 namespace {
 std::mutex g_mutex;
 uint16_t g_low, g_high; // last vibration the title set
+constexpr uint32_t kRumbleMs = 0xFFFF; // SDL's longest rumble (SDL_MAX_RUMBLE_DURATION_MS, internal)
 #ifdef SCDA_HAVE_SDL3
 bool g_sdl;             // SDL gamepad subsystem up
 SDL_Gamepad* g_pad;     // open SDL gamepad, or null
@@ -61,7 +62,7 @@ SDL_Gamepad* SdlPad()
         {
             const char* name = SDL_GetGamepadName(g_pad);
             RuntimeLog("[input] SDL gamepad: %s type %d\n", name ? name : "?", int(SDL_GetGamepadType(g_pad)));
-            SDL_RumbleGamepad(g_pad, g_low, g_high, 0);
+            SDL_RumbleGamepad(g_pad, g_low, g_high, kRumbleMs);
         }
         SDL_free(ids);
     }
@@ -134,6 +135,8 @@ void PadSetVibration(uint16_t low, uint16_t high)
     g_high = high;
 #ifdef SCDA_HAVE_SDL3
     if (g_pad)
-        SDL_RumbleGamepad(g_pad, low, high, 0); // 0: until changed
+        // Not 0 ("until changed"): that also stops SDL resending it, and a DualShock 4 drops rumble
+        // after ~5 s. Repeated calls with the same speeds only extend it.
+        SDL_RumbleGamepad(g_pad, low, high, kRumbleMs);
 #endif
 }
