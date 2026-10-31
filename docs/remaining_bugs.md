@@ -65,10 +65,26 @@ Evidence paths under `_run/` are local only (git-ignored).
   vertex z 0 (VTE 0x300 = raw z, the zs -1 / zo 1 viewport is not applied) and vertex colour (0, 0, 0, 0)
   (dwords 3-6). PS c0 (0, 0, 0, 0.533/0.502) is a stale constant: the clear PS outputs the interpolator.
   So by the data the whole mask starts at 0 (depth 0, stencil 0 = dword 0). That gives Jail's patches.
+  (Superseded below: Kinshasa needs 1.)
   `AliasedClearColor`'s (0, 1, 1, 1) uses zo, which VTE 0x300 does not apply. It probably hides another bug
   that darkens Kinshasa when B = 0. The material computes `r1.w = mask.B + s13.<ch> + mask.R * c253.w`,
   then `min(r1.w, mask.A)`, where s13 is a DXT1 (fmt 18) baked-shadow texture and the channel is chosen by
   the sign of c15.z. Next: check that term on Kinshasa's lit ground (s13 decode/channel, c15/c253).
+- **Kinshasa term check (2026-10-31, extended `SCDA_TRACE_PS`: PS c15/c16/c220/c253/c254, VS c240-243/c255,
+  bools, first 16 bytes per texture slot; `_run/jm/kin_ps3.log`):** correction: the third term is
+  `iT[8].x * c253.w` (VS oT8), not mask.R. It is 0 on Kinshasa: VS c47defcd writes oT8.xy =
+  c242.zw * (1 - ...) when b7, else `-abs(x) > c255.w`; c242 = 0, c255.w = 0, b7 clear. 363 of 990 draws bind
+  the default 8x8 s13 at 036FA000 (fmt 6, endian 8in32, swizzle zyxw, bytes FF000000 = (0, 0, 0, 1)): R/G/B
+  are 0, so for them the light is `min(mask.B, mask.A)`. Kinshasa has no light passes before the copy, so
+  mask.B = the clear's alpha. A/B `SCDA_ALIAS_RAW_Z=1` (clear depth = raw z 0, `_run/jm/kin_on_rawz.png`):
+  the whole alley ground goes dark and Sam's sun shadow disappears; the walls (real s13) stay lit. So on
+  the console mask.B must be ~1 there: the clear is 1, not 0.
+- **Clears identical:** Jail 1620 and Kinshasa 2400 trace the same mask clear: same registers (zs -1, zo 1,
+  ref 00FF0000, zctl 00008777, VTE 0x300) and the same quads (z -3.7e-9, colour 0). One clear value cannot
+  give B = 0 on Jail and B = 1 on Kinshasa, so the clear stays (0, 1, 1, 1). Jail's patches must come from
+  downstream: with B saturated the floor is `min(1, mask.A)` = the sun term A (49a6d6fc REVSUB on G/A;
+  on Jail b5531808 MIN only writes G), or from the post-material light passes. Next: dump the Jail mask's A
+  (`SCDA_DUMP_RESOLVES`, 01EB2000 at 1620) and compare the window shapes with the 360 shot.
 - **Ruled out:** negative light alpha (PS b5531808 outputs `0.111 * sum(shadow tests * c2.y * cookie)` >= 0,
   c2 = (0, .8, 0, 0), so the unclamped-source idea does not apply). Alias off (`SCDA_NO_DEPTH_COLOR_ALIAS=1`)
   shows Jail patches, but only because rows 0-352 keep the previous frame's mask. Kinshasa then gets a black

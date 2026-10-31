@@ -1007,11 +1007,10 @@ static float SnapshotVertexDword(const DrawCall& d, const Frame& frame, const Re
 // depth 1, stencil 0: (0, 1, 1, 1) = lit. Writing 0 left the whole ground in shadow.
 // Open: the sniper scope's bottom band (docs/remaining_bugs.md) reads this mask's alpha after a blur
 // pass and shows cyan again; stencil-in-A removed the band but put the ground back in shadow.
-// DOUBT (2026-10-31): the clear quads' own data say the mask starts at 0: the 4x alias quad has
-// z 0 under VTE 0x300 (raw z, viewport z transform off) and the 1x colour quad (rows 352-360)
-// colour (0, 0, 0, 0) (SCDA_TRACE_DEPTH_ALIAS clear quad lines). With 0 the Jail floor gets its
-// window patches but Kinshasa's ground goes dark, so (0, 1, 1, 1) likely hides another bug in
-// material PS 63053924 (its s13 baked-shadow term). docs/remaining_bugs.md.
+// The clear quads' own data say z 0 (VTE 0x300 skips the zs/zo transform), i.e. mask 0. Checked
+// 2026-10-31: with 0 (SCDA_ALIAS_RAW_Z=1) Kinshasa's sunlit ground goes dark (its material reads
+// min(mask.B, mask.A) when its baked-shadow s13 is the black default), and Jail traces the identical
+// clear, so 1 stays. Jail's missing floor patches come from elsewhere (docs/remaining_bugs.md).
 // shortcut: other colour formats get 0.
 static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
 {
@@ -1022,6 +1021,11 @@ static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
     const uint32_t zoBits = regs[0x2114];
     float zo;
     memcpy(&zo, &zoBits, 4);
+    // SCDA_ALIAS_RAW_Z=1 (A/B): honour PA_CL_VTE_CNTL bit 5 (z offset enable; off in the clears'
+    // VTE 0x300), so the clear depth is the quad's raw z ~ 0.
+    static const bool rawZ = getenv("SCDA_ALIAS_RAW_Z") != nullptr;
+    if (rawZ && !(regs[0x2206] & 0x20))
+        zo = 0.0f;
     const double depth = std::clamp(double(zo), 0.0, 1.0);
     uint32_t d24;
     if ((regs[kRegRbDepthInfo] >> 16) & 1) // D24FS8: 20e4 float (4-bit exponent, bias 15, 20-bit mantissa)
@@ -1606,7 +1610,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         }();
         const bool tracePs = std::find(tracePsList.begin(), tracePsList.end(), d.ps->hash) != tracePsList.end();
         if (tracePs)
-            for (uint32_t c = 0; c < 24; c = c == 7 ? 20 : c + 1) // c0-c7, c20-c23
+            for (uint32_t c : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 15u, 16u, 20u, 21u, 22u, 23u, 220u, 253u, 254u })
             {
                 auto f = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + 1024 + c * 4 + i]); };
                 RuntimeLog("[rtrace]   ps c%u %g %g %g %g blend %08X\n", c, f(0), f(1), f(2), f(3), r.regs[0x2201]);
@@ -1616,7 +1620,10 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         {
             auto pf = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + 1024 + 255 * 4 + i]); };
             RuntimeLog("[rtrace]   ps c255 %g %g %g %g\n", pf(0), pf(1), pf(2), pf(3));
-            for (uint32_t c = 0; c < 32; c++)
+            RuntimeLog("[rtrace]   bools %08X %08X %08X %08X %08X %08X %08X %08X\n", r.regs[kRegBoolConstants], r.regs[kRegBoolConstants + 1],
+                r.regs[kRegBoolConstants + 2], r.regs[kRegBoolConstants + 3], r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
+                r.regs[kRegBoolConstants + 6], r.regs[kRegBoolConstants + 7]);
+            for (uint32_t c = 0; c < 256; c = c == 31 ? 240 : c == 243 ? 255 : c + 1) // c0-c31, c240-c243, c255
             {
                 auto f = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + i]); };
                 RuntimeLog("[rtrace]   vs c%u %g %g %g %g\n", c, f(0), f(1), f(2), f(3));
@@ -1714,6 +1721,15 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                     RuntimeLog("[rtrace]   fetch %u: %08X %08X %08X %08X %08X %08X\n", slot, r.regs[kRegFetchConstants + slot * 6],
                         r.regs[kRegFetchConstants + slot * 6 + 1], r.regs[kRegFetchConstants + slot * 6 + 2], r.regs[kRegFetchConstants + slot * 6 + 3],
                         r.regs[kRegFetchConstants + slot * 6 + 4], r.regs[kRegFetchConstants + slot * 6 + 5]);
+            // First 16 bytes at each texture slot's base (tiny default textures: their texel value).
+            for (uint32_t slot = 0; slot < 16; slot++)
+                if ((r.regs[kRegFetchConstants + slot * 6] & 3) == 2)
+                {
+                    const uint8_t* tb = PhysicalPtr(r.regs[kRegFetchConstants + slot * 6 + 1] & 0x1FFFF000);
+                    if (tb && GuestRangeReadable(tb, 16))
+                        RuntimeLog("[rtrace]   texel %u: %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X\n", slot,
+                            tb[0], tb[1], tb[2], tb[3], tb[4], tb[5], tb[6], tb[7], tb[8], tb[9], tb[10], tb[11], tb[12], tb[13], tb[14], tb[15]);
+                }
         }
         // SCDA_TRACE_CONSTS=<index base hex>: draws with that index base also log their vertex/index
         // snapshot hashes, draw state, PS c0, bool and vertex fetch constants and VS c0-c255.
