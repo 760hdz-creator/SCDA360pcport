@@ -14,6 +14,7 @@
 #include <gpu/frame_queue.h>
 #include <input.h>
 #include <pad.h>
+#include <prompts.h>
 #include <runtime.h>
 #include "overlay.h"
 #include "updater.h"
@@ -40,6 +41,8 @@ DisplaySettings g_settings; // as shown in the menu and saved to settings.ini
 ID3D11Device* g_device;      // the ImGui DX11 backend's (a lost device makes a new one)
 bool g_imgui;
 int g_openTab = -1; // SCDA_MENU=<0-2>: the menu starts open on that tab (unattended checks)
+constexpr int kTabs = 3;
+int g_tabStep = 0;  // L1/R1 (LB/RB) pressed in the menu: -1 previous tab, +1 next
 
 // Update notification: shown once, when the check has answered and the player has signed in at the
 // main menu (ProfileSignedIn), for kToastSeconds (an available update 3x longer).
@@ -226,30 +229,53 @@ void Menu()
     if (ImGui::Begin("Extra Settings - Splinter Cell: Double Agent Recomp", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
     {
         const DisplaySettings before = g_settings;
+        // Previous/next tab: L1/R1 (LB/RB) on a pad, Q/E on the keyboard.
+        static int current = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false))
+            g_tabStep = -1;
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+            g_tabStep = 1;
+        if (g_tabStep && g_openTab < 0)
+            g_openTab = (current + g_tabStep + kTabs) % kTabs;
+        g_tabStep = 0;
+        // Widgets leave room for the longest label and its (?) on the right.
+        ImGui::PushItemWidth(-em * 15.0f);
         if (ImGui::BeginTabBar("tabs"))
         {
             auto tab = [](int i) { return g_openTab == i ? ImGuiTabItemFlags_SetSelected : 0; };
             if (ImGui::BeginTabItem("Display", nullptr, tab(0)))
             {
+                current = 0;
                 DisplayTab(g_settings);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Graphics", nullptr, tab(1)))
             {
+                current = 1;
                 GraphicsTab(g_settings);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Update", nullptr, tab(2)))
             {
+                current = 2;
                 UpdateTab();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
             g_openTab = -1;
         }
+        ImGui::PopItemWidth();
         Save(before, g_settings);
-        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - em * 2.0f);
-        ImGui::TextDisabled("Back to the game: F1 / Esc, or Start / L3+R3 on a pad. Changes save at once.");
+        // Footer: the controls of the device in use (prompts.h), two short lines.
+        const PromptStyle style = CurrentPromptStyle();
+        const bool ps = style == PromptStyle::PS4 || style == PromptStyle::PS5;
+        const char* tabs = style == PromptStyle::Keyboard ? "Q / E" : ps ? "L1 / R1" : "LB / RB";
+        const char* close = style == PromptStyle::Keyboard ? "F1 / Esc" : ps ? "OPTIONS / L3+R3" : "Start / L3+R3";
+        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y - ImGui::GetTextLineHeightWithSpacing() * 2.0f -
+                             ImGui::GetStyle().ItemSpacing.y * 2.0f);
+        ImGui::Separator();
+        ImGui::TextDisabled("Switch tabs: %s    Close: %s", tabs, close);
+        ImGui::TextDisabled("Changes save at once.");
     }
     ImGui::End();
 }
@@ -324,6 +350,8 @@ void PollPadCombo()
         PostMessageW(g_hwnd, kOverlayToggleMessage, 0, 0);
     else if (open && g_padArmed && (pressed & (XINPUT_GAMEPAD_START | XINPUT_GAMEPAD_BACK)))
         PostMessageW(g_hwnd, kOverlayToggleMessage, 0, 0);
+    else if (open && g_padArmed && (pressed & (XINPUT_GAMEPAD_LEFT_SHOULDER | XINPUT_GAMEPAD_RIGHT_SHOULDER)))
+        g_tabStep = (pressed & XINPUT_GAMEPAD_LEFT_SHOULDER) ? -1 : 1;
     g_padCombo = held;
     if (!buttons)
         g_padArmed = true;
