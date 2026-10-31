@@ -30,10 +30,12 @@ struct SharedConstants
     uint32_t colorClamp; // bit n: RT n is 7e3 (clamp oCn)
     uint32_t alphaFunc;  // RB_COLORCONTROL bits 0-2
     uint32_t tex3DIs2D;  // bit n: tfetch3D on slot n samples the 2D binding (fetch constant not 3D)
-    uint32_t pad0;
+    uint32_t paramGen;   // PS param-gen register + 1 (SQ_CONTEXT_MISC), 0 = off
     // 1 / (internal resolution scale x MSAA samples per pixel) per axis: host pixel position -> guest.
     float positionScale[2];
-    float pad1[2];
+    float pointSize;      // constant point sprite diameter, guest pixels (PA_SU_POINT_SIZE)
+    uint32_t pointMinMax; // PA_SU_POINT_MINMAX raw
+
 };
 static_assert(sizeof(SharedConstants) == 1024 && sizeof(SharedConstants) % 16 == 0);
 static_assert(offsetof(SharedConstants, fetch) == 160 && offsetof(SharedConstants, specConstants) == 928);

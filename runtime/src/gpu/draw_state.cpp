@@ -39,6 +39,14 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
     }
     c.windowToNdc[0] = 2.0f / float(rtWidth);
     c.windowToNdc[1] = 2.0f / float(rtHeight);
+    // SQ_PROGRAM_CNTL (0x2180) bit 18 PARAM_GEN: the PS gets the pixel position (xy) and point sprite
+    // coordinate (zw) in the register SQ_CONTEXT_MISC (0x2181) bits 8-15 names (Xenia). 0 = off.
+    if ((r[0x2180] >> 18) & 1)
+        c.paramGen = ((r[0x2181] >> 8) & 0xFF) + 1;
+    // Point sprites: PA_SU_POINT_SIZE width (bits 16-31, 12.4 radius -> diameter = v / 8 pixels) when
+    // the VS exports no size; PA_SU_POINT_MINMAX (min 0-15, max 16-31, same units) clamps it.
+    c.pointSize = float(r[0x2280] >> 16) / 8.0f;
+    c.pointMinMax = r[0x2281];
     // PA_SC_WINDOW_OFFSET (15-bit signed x, y) applies when PA_SU_SC_MODE_CNTL bit 16 is set.
     if (r[0x2205] & (1u << 16))
     {
