@@ -17,6 +17,7 @@ TEST(settings_defaults_when_missing)
     CHECK(s.vsync);
     CHECK(!s.cleanGoggles); // authentic goggle overlay unless asked
     CHECK(s.drawBackFaces); // solid one-sided walls by default
+    CHECK_EQ(s.fov, 75u);   // the game's own field of view
 }
 
 TEST(settings_parsed)
@@ -24,6 +25,8 @@ TEST(settings_parsed)
     DisplaySettings s = LoadDisplaySettings(Ini("[Display]\nScale=2\nMode=borderless\nVSync=0\nCleanGoggles=1\n"));
     CHECK(s.cleanGoggles);
     CHECK(!LoadDisplaySettings(Ini("[Display]\nDrawBackFaces=0\n")).drawBackFaces);
+    CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nFOV=95\n")).fov, 95u);
+    CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nFOV=300\n")).fov, 75u);
     CHECK_EQ(s.scale, 2u);
     CHECK(s.mode == DisplaySettings::Borderless);
     CHECK(!s.vsync);

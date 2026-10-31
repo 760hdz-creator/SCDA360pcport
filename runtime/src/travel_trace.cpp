@@ -70,8 +70,11 @@ static uint32_t g_missionObject = 0;
 static uint32_t g_endMissionTick = 0; // engine ticks since the capture
 
 // Relaunch: guest memory is reset, so the captured object is stale.
+void FovReset(); // fov.cpp
+void FovTick();
 void TravelTraceReset()
 {
+    FovReset();
     g_missionObject = 0;
     g_endMissionTick = 0;
 }
@@ -110,6 +113,7 @@ PPC_FUNC(sub_825C6C68)
         ctx = saved;
     }
     ForceEndMission(ctx, base);
+    FovTick();
     __imp__sub_825C6C68(ctx, base);
 }
 
@@ -117,27 +121,9 @@ PPC_FUNC(sub_825C6C68)
 // sub_8258E908 (r3 object, r4 FName index) once, with the caller lr. Event wrappers =
 // sub_8258E908 + ProcessEvent (vtable +16: this, function, parms, 0).
 // GNames = TArray<FNameEntry*> at 0x82F284D4; entry +12 = name (ANSI, or UTF-16 BE when the first byte is 0).
-static std::string GuestFName(uint32_t index)
-{
-    const uint32_t data = GuestLoad32(0x82F284D4);
-    const uint32_t num = GuestLoad32(0x82F284D8);
-    if (!data || index >= num)
-        return "?";
-    const uint32_t entry = GuestLoad32(data + index * 4);
-    if (!entry)
-        return "?";
-    if (*(g_base + entry + 12) == 0)
-        return GuestWide(entry + 12);
-    std::string s;
-    for (uint32_t i = 0; i < 64; i++)
-    {
-        const uint8_t c = *(g_base + entry + 12 + i);
-        if (!c)
-            break;
-        s += char(c);
-    }
-    return s;
-}
+std::string GuestFNameOf(uint32_t index); // fov.cpp
+void FovSeeObject(uint32_t obj);           // fov.cpp
+static std::string GuestFName(uint32_t index) { return GuestFNameOf(index); }
 
 extern "C" PPC_FUNC(__imp__sub_8258E908);
 PPC_FUNC(sub_8258E908)
@@ -160,6 +146,7 @@ PPC_FUNC(sub_8258E908)
         }
     }
     const uint32_t nameIndex = ctx.r4.u32;
+    FovSeeObject(ctx.r3.u32);
     static const bool capture = getenv("SCDA_FORCE_ENDMISSION") != nullptr;
     // Cozumel_01 never looks up CheckMissionStatus; IsMissionEnd goes to the same object on every map.
     if (capture && !g_missionObject && (GuestFName(nameIndex) == "CheckMissionStatus" || GuestFName(nameIndex) == "IsMissionEnd"))

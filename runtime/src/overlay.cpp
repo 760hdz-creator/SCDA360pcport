@@ -15,6 +15,7 @@
 #include <input.h>
 #include <pad.h>
 #include <prompts.h>
+#include <fov.h>
 #include <runtime.h>
 #include "overlay.h"
 #include "updater.h"
@@ -77,6 +78,7 @@ void Apply(const DisplaySettings& s)
     g_renderer->SetAnisotropy(s.anisotropy);
     g_renderer->SetCleanGoggles(s.cleanGoggles);
     g_renderer->SetDrawBackFaces(s.drawBackFaces);
+    SetFovOverride(float(s.fov));
 }
 
 // Writes the keys that changed.
@@ -94,6 +96,8 @@ void Save(const DisplaySettings& before, const DisplaySettings& after)
         save("Anisotropy", std::to_string(after.anisotropy));
     if (before.cleanGoggles != after.cleanGoggles)
         save("CleanGoggles", after.cleanGoggles ? "1" : "0");
+    if (before.fov != after.fov)
+        save("FOV", std::to_string(after.fov));
     if (before.drawBackFaces != after.drawBackFaces)
         save("DrawBackFaces", after.drawBackFaces ? "1" : "0");
     if (before.antiAliasing != after.antiAliasing)
@@ -141,6 +145,10 @@ void DisplayTab(DisplaySettings& s)
     const char* const names[] = { "Off", "2x", "4x", "8x", "16x" };
     if (ImGui::Combo("Anisotropic filtering", &level, names, 5))
         s.anisotropy = uint32_t(levels[level]);
+    int fov = int(s.fov);
+    if (ImGui::SliderInt("Field of view", &fov, 60, 110, fov == 75 ? "%d (default)" : "%d"))
+        s.fov = uint32_t(fov);
+    Hint("Camera field of view in degrees; 75 is the game's own. Zoom (binoculars, sniper, cameras) keeps its own value.");
     ImGui::Checkbox("Clean goggles", &s.cleanGoggles);
     Hint("Night, thermal and EMF vision without the scanlines and noise.");
 }

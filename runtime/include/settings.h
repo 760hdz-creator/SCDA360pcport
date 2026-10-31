@@ -16,6 +16,8 @@ struct DisplaySettings
     // Opaque surfaces drawn from both sides ([Display] DrawBackFaces=1, default on): one-sided walls
     // stay solid when the camera is inside them (Iceland shack). 0 = the console's culling.
     bool drawBackFaces = true;
+    // Field of view in degrees ([Display] FOV=60..110). 75 is the game's own (nothing is changed).
+    uint32_t fov = 75;
     // Post-processing on the presented frame (F1 menu, Graphics). Defaults leave the image as the
     // console made it. The game's own 4x MSAA is always on.
     enum AntiAliasing { AaOff, AaFxaa } antiAliasing = AaOff; // [Display] AntiAliasing=Off|FXAA

@@ -89,6 +89,12 @@ DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini)
             s.cleanGoggles = Truthy(value);
         else if (key == "drawbackfaces")
             s.drawBackFaces = Truthy(value);
+        else if (key == "fov")
+        {
+            int v = atoi(value.c_str());
+            if (v >= 60 && v <= 110)
+                s.fov = uint32_t(v);
+        }
         else if (key == "antialiasing")
         {
             if (value == "off") s.antiAliasing = DisplaySettings::AaOff;
