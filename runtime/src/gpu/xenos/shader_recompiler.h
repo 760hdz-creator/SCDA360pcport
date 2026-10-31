@@ -27,6 +27,7 @@ struct StringBuffer
 struct ShaderRecompiler : StringBuffer
 {
     uint32_t indentation = 0;
+    uint32_t loopCounter = 0; // unique counter names for simple-control-flow loops
     bool isPixelShader = false;
     const uint8_t* constantTableData = nullptr;
     std::unordered_map<uint32_t, VertexElement> vertexElements;

@@ -1584,6 +1584,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     out += "\tint a0 = 0;\n";
     out += "\tint aL = 0;\n";
+    out += "\tint lc = 0;\n";
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
     out += "\tfloat texLod = 0.0;\n";
@@ -1784,14 +1785,17 @@ void ShaderRecompiler::recompileBody(const be<uint32_t>* code, uint32_t shaderSi
                 #ifdef UNLEASHED_RECOMP
                     print("[unroll] ");
                 #endif
-                    println("for (aL = 0; aL < i{}.x; aL++)", uint32_t(cfInstr.loopStart.loopId));
+                    // aL starts at the loop constant's start and advances by its step; a separate
+                    // counter runs the count (shortcut: no aL stack for nested loops).
+                    println("aL = i{0}.y; for (int lc{1} = 0; lc{1} < i{0}.x; lc{1}++, aL += i{0}.z)", uint32_t(cfInstr.loopStart.loopId),
+                        loopCounter++);
                     indent();
                     out += "{\n";
                     ++indentation;
                 }
                 else 
                 {
-                    out += "\t\t\taL = 0;\n";
+                    println("\t\t\taL = i{}.y; lc = 0;", uint32_t(cfInstr.loopStart.loopId));
                 }
                 break;
 
@@ -1804,8 +1808,8 @@ void ShaderRecompiler::recompileBody(const be<uint32_t>* code, uint32_t shaderSi
                 }
                 else
                 {
-                    out += "\t\t\t++aL;\n";
-                    println("\t\t\tif (aL < i{}.x)", uint32_t(cfInstr.loopEnd.loopId));
+                    println("\t\t\t++lc; aL += i{}.z;", uint32_t(cfInstr.loopEnd.loopId));
+                    println("\t\t\tif (lc < i{}.x)", uint32_t(cfInstr.loopEnd.loopId));
                     out += "\t\t\t{\n";
                     println("\t\t\t\tpc = {};", uint32_t(cfInstr.loopEnd.address));
                     out += "\t\t\t\tcontinue;\n";

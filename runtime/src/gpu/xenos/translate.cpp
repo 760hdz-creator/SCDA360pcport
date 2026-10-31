@@ -233,6 +233,13 @@ static std::string BuildInclude()
         snprintf(line, sizeof(line), "#define b%d ((g_BoolWords[%d][%d] >> %d) & 1)\n", n, n >> 7, (n >> 5) & 3, n & 31);
         s += line;
     }
+    // Loop constants i0..i31 (Xenia: count bits 0-7, aL start 8-15, signed step 16-23).
+    for (int n = 0; n < 32; n++)
+    {
+        snprintf(line, sizeof(line), "#define i%d int4(g_Loops[%d][%d] & 0xFF, (g_Loops[%d][%d] >> 8) & 0xFF, int(g_Loops[%d][%d] << 8) >> 24, 0)\n",
+            n, n >> 2, n & 3, n >> 2, n & 3, n >> 2, n & 3);
+        s += line;
+    }
     for (int n = 0; n < 32; n++)
     {
         snprintf(line, sizeof(line),
