@@ -3,6 +3,19 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
+## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
+
+- **Symptom:** after the scope-band fix (34638bd) all sunlit ground in Kinshasa was dark, Sam cast no shadow and floor
+  textures looked flat. `SCDA_NO_DEPTH_COLOR_ALIAS=1` restored the console look.
+- **Cause:** the title clears its 640x360 sun-shadow mask (EDRAM 0x1C0) with a depth-only D3D clear through a 4x
+  alias at depth 1.0 (viewport z scale -1, offset 1), stencil 0. The aliased tiles then hold the depth/stencil dword,
+  which reads as colour (0, 1, 1, 1) = lit. 34638bd wrote 0 (= fully shadowed).
+- **Fix:** `AliasedClearColor` writes the real dword (stencil in R, 24 depth bits in G/B/A, Xenia's D24S8 and 8_8_8_8
+  layouts) via the blend factor and a no-kill PS. Clears at depth 0 still give 0. Verified on Kinshasa01 frame 2400
+  (`_run/k1c/` against `_run/k1b/` before). Trace: `SCDA_TRACE_DEPTH_ALIAS=1` (or `=<frame>` for every one in a frame).
+- **Regressed:** the sniper-scope bottom band (below) shows cyan again. The scope frame's blur pass (PS b1649a4c)
+  reads this mask; putting stencil in A instead removed the band but shadowed the ground again.
+
 ## FIXED. Scale 2+ showed stale tiles (2026-10-30)
 
 - **Symptom:** at `Scale=2`, screen rows 256 and below (EDRAM tiles 1-2) froze on an old image (01_Intro cutscene).
@@ -12,7 +25,7 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** the most recently copied containing texture wins (`Resolved::lastCopy`). Verified on Intro frames
   380-440 at Scale 2 (`_run/s2/seq2/`); same frames froze before (`_run/s2/seq/`).
 
-## FIXED. Sniper scope: cyan band and pink rows at the bottom of the screen (2026-10-31)
+## PARTLY OPEN. Sniper scope: cyan band and pink rows at the bottom of the screen (2026-10-31)
 
 - **Symptom:** in Kinshasa scope view, the bottom ~20% of the screen turned flat cyan `(0,198,198)`, green over the
   scope body, and the last 5 rows pink. (The purple lens was fixed earlier by the resolve-container fix.)

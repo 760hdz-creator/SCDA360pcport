@@ -249,9 +249,9 @@ TextureFetch DecodeTextureFetch(const RegisterFile& r, uint32_t slot)
         static std::mutex m;
         static std::unordered_set<uint32_t> seen;
         std::lock_guard lock(m);
-        if (seen.insert(t.format << 8 | ((c0 >> 2) & 0xFF)).second)
+        if (seen.insert(t.format << 16 | ((c3 >> 13) & 0x3F) << 8 | ((c0 >> 2) & 0xFF)).second)
             RuntimeLog("[gamma] tex fmt %u sign %u%u%u%u (%ux%u, fetch exp %d)\n", t.format, (c0 >> 2) & 3, (c0 >> 4) & 3, (c0 >> 6) & 3,
-                (c0 >> 8) & 3, t.width, t.height, int32_t(c3 << 6) >> 26);
+                (c0 >> 8) & 3, t.width, t.height, int32_t(c3 << 13) >> 26);
     }
     return t;
 }

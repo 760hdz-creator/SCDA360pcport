@@ -270,6 +270,19 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
 
 void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicubic)
 {
+    // SCDA_TRACE_TFETCH=<file>: append each fetch's fields the translation ignores (filter overrides,
+    // LOD, unnormalized coordinates, LOD/gradient set ops) when not at their defaults.
+    if (const char* traceFile = getenv("SCDA_TRACE_TFETCH"))
+    {
+        if (FILE* f = fopen(traceFile, "a"))
+        {
+            fprintf(f, "op %u const %u dim %u denorm %u mag %u min %u mip %u aniso %u compLod %u regLod %u regGrad %u bias %d off %d,%d\n",
+                uint32_t(instr.opcode), instr.constIndex, uint32_t(instr.dimension), instr.texCoordDenorm, instr.magFilter,
+                instr.minFilter, instr.mipFilter, instr.anisoFilter, instr.useCompLod, instr.useRegLod, instr.useRegGradients,
+                int(instr.lodBias), int(instr.offsetX), int(instr.offsetY));
+            fclose(f);
+        }
+    }
     if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights)
         return;
 

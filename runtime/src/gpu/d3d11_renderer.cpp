@@ -324,6 +324,7 @@ struct DrawResources
     ComPtr<ID3D11ShaderResourceView> gammaRampSrv;
     uint32_t gammaRampVersion = ~0u;
     ComPtr<ID3D11GeometryShader> rectListGs;
+    ComPtr<ID3D11PixelShader> zeroPs; // aliased depth-only clears: returns 1 (x blend factor), never kills
     ComPtr<ID3D11ComputeShader> saturateCs;
     ComPtr<ID3D11Buffer> saturateRect;
     ComPtr<ID3D11RasterizerState> rasterizer;
@@ -524,6 +525,13 @@ bool D3D11Renderer::CreateDrawResources()
     auto gs = CompileHlsl(kRectListGs, "gs_5_0", &error);
     if (gs.empty() || FAILED(m_device->CreateGeometryShader(gs.data(), gs.size(), nullptr, &r->rectListGs)))
         printf("[d3d11] rect list shader: %s\n", error.c_str()); // rect lists are then skipped
+    {
+        static const char kZeroPs[] = "void main(out float4 o0 : SV_Target0, out float4 o1 : SV_Target1, out float4 o2 : SV_Target2,"
+             " out float4 o3 : SV_Target3) { o0 = o1 = o2 = o3 = 1.0; }";
+        auto zero = CompileHlsl(kZeroPs, true, &error);
+        if (zero.empty() || FAILED(m_device->CreatePixelShader(zero.data(), zero.size(), nullptr, &r->zeroPs)))
+            printf("[d3d11] zero shader: %s\n", error.c_str());
+    }
     auto cs = CompileHlsl(kSaturateCs, "cs_5_0", &error);
     D3D11_BUFFER_DESC rb{};
     rb.ByteWidth = 32;
@@ -844,13 +852,46 @@ void D3D11Renderer::ApplyRegisterWrites(const Frame& frame, size_t end)
 // clears depth through a 4x alias whose colour info names the same tiles. EDRAM holds both, so the
 // depth/stencil write replaces the colour there (Kinshasa scope: the scope mask's stale cyan showed
 // in a bottom-of-screen blend). Host depth is separate, so the colour target is written too.
-// shortcut: written as 0 (reversed-Z clear depth 0, stencil 0), not the actual depth/stencil bits.
+// The colour written is the depth/stencil dword read as the colour format (AliasedClearColor).
 // SCDA_NO_DEPTH_COLOR_ALIAS=1 turns it off (A/B).
 static bool DepthOnlyOverwritesColor(const RegisterFile& regs)
 {
     static const bool off = getenv("SCDA_NO_DEPTH_COLOR_ALIAS") != nullptr;
     return !off && (regs[kRegRbModeControl] & 7) == 5 && (regs[0x2200] & 6) == 6 &&
         (regs[kRegRbColorInfo] & 0xFFF) == (regs[kRegRbDepthInfo] & 0xFFF);
+}
+
+// The EDRAM dword an aliased depth-only clear leaves, as RGBA of an 8_8_8_8 colour target: D24S8 /
+// D24FS8 keep stencil in bits 0-7 and depth above; 8_8_8_8 keeps R in bits 0-7 (Xenia EDRAM layouts).
+// The clear depth is the viewport z offset (the clear draws z ~ 0: depth 1 has scale -1, offset 1),
+// the stencil the reference. Kinshasa clears its 640x360 sun-shadow mask (EDRAM 0x1C0) this way to
+// depth 1, stencil 0: (0, 1, 1, 1) = lit. Writing 0 left the whole ground in shadow.
+// Open: the sniper scope's bottom band (docs/remaining_bugs.md) reads this mask's alpha after a blur
+// pass and shows cyan again; stencil-in-A removed the band but put the ground back in shadow.
+// shortcut: other colour formats get 0.
+static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
+{
+    rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0.0f;
+    const uint32_t format = (regs[kRegRbColorInfo] >> 16) & 0xF;
+    if (format > 1) // 8_8_8_8 and 8_8_8_8_GAMMA only
+        return;
+    const uint32_t zoBits = regs[0x2114];
+    float zo;
+    memcpy(&zo, &zoBits, 4);
+    const double depth = std::clamp(double(zo), 0.0, 1.0);
+    uint32_t d24;
+    if ((regs[kRegRbDepthInfo] >> 16) & 1) // D24FS8: 20e4 float (4-bit exponent, bias 15, 20-bit mantissa)
+    {
+        int e = 0;
+        const double m = depth > 0 ? std::frexp(depth, &e) : 0.0; // depth = m * 2^e, m in [0.5, 1)
+        const int biased = e - 1 + 15;
+        d24 = depth <= 0 || biased <= 0 ? 0 : (uint32_t(biased) << 20) | uint32_t((m * 2.0 - 1.0) * (1 << 20) + 0.5);
+    }
+    else
+        d24 = uint32_t(depth * 0xFFFFFF + 0.5);
+    const uint32_t dword = (d24 << 8) | (regs[0x210D] & 0xFF);
+    for (uint32_t c = 0; c < 4; c++)
+        rgba[c] = float((dword >> (8 * c)) & 0xFF) / 255.0f;
 }
 
 void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlots)
@@ -908,10 +949,22 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
 
     HostBlend b = DecodeBlend(regs);
     const bool zeroColor = DepthOnlyOverwritesColor(regs);
-    if (zeroColor) // colour 0 whatever the PS returns
+    // SCDA_TRACE_DEPTH_ALIAS=1: each distinct depth-only state once; =<n>: also every one in frame n.
+    static const char* traceAliasEnv = getenv("SCDA_TRACE_DEPTH_ALIAS");
+    static const bool traceAlias = traceAliasEnv != nullptr;
+    static const unsigned long long traceAliasFrame = traceAliasEnv ? strtoull(traceAliasEnv, nullptr, 10) : 0;
+    static std::unordered_set<uint64_t> aliasSeen;
+    if (traceAlias && (regs[kRegRbModeControl] & 7) == 5 && (traceAliasFrame > 1 && m_presented == traceAliasFrame ||
+        aliasSeen.insert((uint64_t(regs[kRegRbColorInfo]) << 32) ^ (uint64_t(regs[kRegRbDepthInfo]) << 16) ^ regs[kRegRbSurfaceInfo] ^ (uint64_t(regs[0x2200]) << 40) ^ (uint64_t(regs[0x2114]) << 20) ^ (uint64_t(regs[0x210D]) << 8) ^ (uint64_t(regs[0x2113]) << 28)).second))
+        RuntimeLog("[zalias] frame %llu alias %d surf %08X color %08X depth %08X zctl %08X sc %08X wo %08X ref %08X zs %08X zo %08X vte %08X clip %08X\n", m_presented, zeroColor ? 1 : 0,
+            regs[kRegRbSurfaceInfo], regs[kRegRbColorInfo], regs[kRegRbDepthInfo], regs[0x2200], regs[0x2205], regs[0x2080],
+            regs[0x210D], regs[0x2113], regs[0x2114], regs[0x2206], regs[0x2204]);
+    if (zeroColor) // the blend factor (AliasedClearColor) whatever the PS returns (zeroPs returns 1)
     {
+        AliasedClearColor(regs, b.factor);
         b.enable = true;
-        b.src = b.dst = b.srcAlpha = b.dstAlpha = D3D11_BLEND_ZERO;
+        b.src = b.srcAlpha = D3D11_BLEND_BLEND_FACTOR;
+        b.dst = b.dstAlpha = D3D11_BLEND_ZERO;
         b.op = b.opAlpha = D3D11_BLEND_OP_ADD;
         b.writeMask = 0xF;
     }
@@ -1568,8 +1621,13 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     // PS left bound with another draw's texture) must not drop depth (Xenia xenos::ModeControl).
     // SCDA_DEPTH_ONLY_PS=1 runs it anyway (A/B).
     static const bool depthOnlyPs = getenv("SCDA_DEPTH_ONLY_PS") != nullptr;
-    const bool depthOnly = (r.regs[kRegRbModeControl] & 7) == 5 && !depthOnlyPs && !DepthOnlyOverwritesColor(r.regs);
-    m_context->PSSetShader(depthOnly ? nullptr : ps.Get(), nullptr, 0);
+    // Aliased depth-only clears (DepthOnlyOverwritesColor) write their colour through a PS that never
+    // kills: the title's PS left bound from an earlier draw dropped pixels of the depth/stencil clear
+    // (Kinshasa ground stayed in shadow). SCDA_ALIAS_TITLE_PS=1 runs the title's PS instead (A/B).
+    static const bool aliasTitlePs = getenv("SCDA_ALIAS_TITLE_PS") != nullptr;
+    const bool aliasClear = DepthOnlyOverwritesColor(r.regs);
+    const bool depthOnly = (r.regs[kRegRbModeControl] & 7) == 5 && !depthOnlyPs && !aliasClear;
+    m_context->PSSetShader(depthOnly ? nullptr : aliasClear && r.zeroPs && !aliasTitlePs ? r.zeroPs.Get() : ps.Get(), nullptr, 0);
     m_context->GSSetShader(rectList ? r.rectListGs.Get() : nullptr, nullptr, 0);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(topology));
     const bool expand = NeedsTriangleListExpansion(d.primType);
