@@ -3,6 +3,16 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
+## FIXED. Dark band over the last 16 screen rows (NY boat, Hotel) (2026-10-31)
+
+- **Symptom:** the bottom 16 rows of the screen were about half as bright as the rows above (10_newyork_02,
+  04_Hotel; any map using the 640x360 light mask).
+- **Cause:** the title's aliased depth-1 clear of the light mask (EDRAM 0x1C0) stops a few mask rows short of row 360.
+  On the console those tiles keep other surfaces' bits; here they stayed 0 (= shadow), and the full-screen lighting
+  pass sampled them for the last 16 screen rows. Found with `SCDA_DUMP_RESOLVES` (mask rows ~356+ black).
+- **Fix:** a non-zero aliased clear also clears the whole host colour target (`SCDA_ALIAS_QUAD_ONLY=1` for A/B).
+  Verified `_run/st/` (NY 1500/2400/2600, Hotel, Kinshasa01: no band).
+
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 
 - **Symptom:** after the scope-band fix (34638bd) all sunlit ground in Kinshasa was dark, Sam cast no shadow and floor
