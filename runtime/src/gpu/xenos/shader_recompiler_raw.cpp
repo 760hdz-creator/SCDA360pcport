@@ -68,6 +68,7 @@ void ShaderRecompiler::recompileRaw(const be<uint32_t>* code, uint32_t shaderSiz
     out += "\tint aL = 0;\n";
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
+    out += "\tfloat texLod = 0.0;\n";
     if (pixel)
         out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";
 
