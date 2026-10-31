@@ -1,4 +1,4 @@
-// Controller input for XamInput*: XInput pad 0, else the keyboard while the game window has focus,
+// Controller input for XamInput*: pad 0 (pad.h: XInput, else SDL3), else the keyboard while the game window has focus,
 // plus SCDA_AUTOPRESS scripted presses (unattended menu testing).
 #pragma once
 #include <windows.h>

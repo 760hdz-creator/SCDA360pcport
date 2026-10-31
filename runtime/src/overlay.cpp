@@ -13,6 +13,7 @@
 #include <gpu/d3d11_renderer.h>
 #include <gpu/frame_queue.h>
 #include <input.h>
+#include <pad.h>
 #include <runtime.h>
 #include "overlay.h"
 #include "updater.h"
@@ -47,6 +48,8 @@ bool g_toastStarted;
 std::chrono::steady_clock::time_point g_toastSince;
 bool g_padCombo;   // L3+R3 held at the last poll
 WORD g_padButtons;  // pad 0 buttons at the last poll
+bool g_padConnected;        // pad 0 present at the last poll
+XINPUT_GAMEPAD g_padState;  // pad 0 at the last poll: the menu's gamepad navigation
 bool g_padArmed;    // the menu may read the pad: every button was released since it opened
 bool g_wasOpen;     // the menu was open at the last poll (render thread)
 
@@ -303,15 +306,17 @@ void PollPadCombo()
     if (open && !g_wasOpen)
         g_padArmed = false;
     g_wasOpen = open;
-    XINPUT_STATE pad{};
-    if (scripted || XInputGetState(0, &pad) != ERROR_SUCCESS)
+    XINPUT_GAMEPAD pad{};
+    g_padConnected = !scripted && PadGetState(pad);
+    g_padState = pad;
+    if (!g_padConnected)
     {
         g_padCombo = false;
         g_padButtons = 0;
         g_padArmed = true;
         return;
     }
-    const WORD buttons = pad.Gamepad.wButtons, pressed = buttons & ~g_padButtons;
+    const WORD buttons = pad.wButtons, pressed = buttons & ~g_padButtons;
     g_padButtons = buttons;
     constexpr WORD combo = XINPUT_GAMEPAD_LEFT_THUMB | XINPUT_GAMEPAD_RIGHT_THUMB;
     const bool held = (buttons & combo) == combo;
@@ -322,6 +327,45 @@ void PollPadCombo()
     g_padCombo = held;
     if (!buttons)
         g_padArmed = true;
+}
+
+// Pad 0 -> ImGui gamepad keys (the Win32 backend's XInput-only feed is compiled out:
+// IMGUI_IMPL_WIN32_DISABLE_GAMEPAD), so PlayStation pads navigate the menu too.
+void FeedImGuiGamepad(ImGuiIO& io)
+{
+    io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
+    if (!g_padConnected)
+        return;
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    const XINPUT_GAMEPAD& g = g_padState;
+    static const struct { ImGuiKey key; WORD button; } kButtons[] = {
+        { ImGuiKey_GamepadStart, XINPUT_GAMEPAD_START }, { ImGuiKey_GamepadBack, XINPUT_GAMEPAD_BACK },
+        { ImGuiKey_GamepadFaceLeft, XINPUT_GAMEPAD_X }, { ImGuiKey_GamepadFaceRight, XINPUT_GAMEPAD_B },
+        { ImGuiKey_GamepadFaceUp, XINPUT_GAMEPAD_Y }, { ImGuiKey_GamepadFaceDown, XINPUT_GAMEPAD_A },
+        { ImGuiKey_GamepadDpadLeft, XINPUT_GAMEPAD_DPAD_LEFT }, { ImGuiKey_GamepadDpadRight, XINPUT_GAMEPAD_DPAD_RIGHT },
+        { ImGuiKey_GamepadDpadUp, XINPUT_GAMEPAD_DPAD_UP }, { ImGuiKey_GamepadDpadDown, XINPUT_GAMEPAD_DPAD_DOWN },
+        { ImGuiKey_GamepadL1, XINPUT_GAMEPAD_LEFT_SHOULDER }, { ImGuiKey_GamepadR1, XINPUT_GAMEPAD_RIGHT_SHOULDER },
+        { ImGuiKey_GamepadL3, XINPUT_GAMEPAD_LEFT_THUMB }, { ImGuiKey_GamepadR3, XINPUT_GAMEPAD_RIGHT_THUMB },
+    };
+    for (auto& b : kButtons)
+        io.AddKeyEvent(b.key, (g.wButtons & b.button) != 0);
+    // As the backend: analog value past the deadzone/threshold, scaled to 0..1, pressed above 0.1.
+    auto analog = [&](ImGuiKey key, float v, float v0, float v1)
+    {
+        const float n = std::clamp((v - v0) / (v1 - v0), 0.0f, 1.0f);
+        io.AddKeyAnalogEvent(key, n > 0.10f, n);
+    };
+    const float dz = XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE, th = XINPUT_GAMEPAD_TRIGGER_THRESHOLD;
+    analog(ImGuiKey_GamepadL2, g.bLeftTrigger, th, 255);
+    analog(ImGuiKey_GamepadR2, g.bRightTrigger, th, 255);
+    analog(ImGuiKey_GamepadLStickLeft, g.sThumbLX, -dz, -32768);
+    analog(ImGuiKey_GamepadLStickRight, g.sThumbLX, dz, 32767);
+    analog(ImGuiKey_GamepadLStickUp, g.sThumbLY, dz, 32767);
+    analog(ImGuiKey_GamepadLStickDown, g.sThumbLY, -dz, -32768);
+    analog(ImGuiKey_GamepadRStickLeft, g.sThumbRX, -dz, -32768);
+    analog(ImGuiKey_GamepadRStickRight, g.sThumbRX, dz, 32767);
+    analog(ImGuiKey_GamepadRStickUp, g.sThumbRY, dz, 32767);
+    analog(ImGuiKey_GamepadRStickDown, g.sThumbRY, -dz, -32768);
 }
 
 void InitImGui()
@@ -388,6 +432,7 @@ void Draw()
     io.ConfigFlags = open && g_padArmed ? io.ConfigFlags | ImGuiConfigFlags_NavEnableGamepad : io.ConfigFlags & ~ImGuiConfigFlags_NavEnableGamepad;
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    FeedImGuiGamepad(io);
     ImGui::NewFrame();
     if (open)
         Menu();
