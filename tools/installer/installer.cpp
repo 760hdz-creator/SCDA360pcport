@@ -1,6 +1,8 @@
 // SCDA Recomp installer. Takes the user's own Splinter Cell: Double Agent (X360) ISO,
 // extracts its XDVDFS volume into <dir>\game, verifies SC4_Offline.xex is the exact
 // binary the recompiled code was generated from, and writes the embedded scda.exe.
+// Run again over an install, it offers an update instead: only scda.exe is replaced (no ISO
+// needed); game data, settings, saves and shortcuts are left alone.
 // Ships no game data.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -30,16 +32,22 @@ static const char* kExpectedImageSha256 = "01193b2556abc03506ad9c0d40f30b04ce27d
 static const wchar_t kAppName[]    = L"Splinter Cell: Double Agent (Recomp)";
 static const wchar_t kFolderName[] = L"SCDA-Recomp";
 static const wchar_t kShortcut[]   = L"Splinter Cell Double Agent (Recomp).lnk";
+// Per-user record of the install (no administrator rights): InstallLocation, Version.
+static const wchar_t kRegKey[]     = L"Software\\SCDARecomp";
+#ifndef SCDA_VERSION
+#define SCDA_VERSION "dev"
+#endif
+static const wchar_t kVersion[]    = L"" SCDA_VERSION; // git short hash (build.bat)
 
 constexpr uint32_t SECTOR = 2048;
 constexpr uint64_t kXgdBases[] = { 0, 0x18300000, 0xFD90000, 0x2080000 }; // xiso, XGD3, XGD2, XGD1
 
 enum { ID_ISO_EDIT = 100, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_INSTALL, ID_PROGRESS, ID_STATUS,
        ID_SC_DESKTOP, ID_SC_STARTMENU, ID_CREDIT };
-constexpr UINT WM_APP_STATUS = WM_APP + 1, WM_APP_PROGRESS = WM_APP + 2, WM_APP_DONE = WM_APP + 3;
+constexpr UINT WM_APP_STATUS = WM_APP + 1, WM_APP_PROGRESS = WM_APP + 2, WM_APP_DONE = WM_APP + 3, WM_APP_ASK = WM_APP + 4;
 
 static HWND g_wnd;
-static bool g_headless, g_ok;
+static bool g_headless, g_ok, g_updating;
 static std::wstring g_error;
 static std::atomic<bool> g_cancel;
 
@@ -211,6 +219,71 @@ static void MakeShortcut(const std::wstring& lnk, const std::wstring& target, co
     link->Release();
 }
 
+// ---- Existing install ----
+
+static void SaveInstallRecord(const std::wstring& dir)
+{
+    HKEY k;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegKey, 0, nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) != ERROR_SUCCESS)
+        return;
+    auto set = [&](const wchar_t* n, const std::wstring& v)
+    { RegSetValueExW(k, n, 0, REG_SZ, (const BYTE*)v.c_str(), DWORD((v.size() + 1) * sizeof(wchar_t))); };
+    set(L"InstallLocation", dir);
+    set(L"Version", kVersion);
+    RegCloseKey(k);
+}
+
+static std::wstring ReadRecord(const wchar_t* name)
+{
+    wchar_t buf[MAX_PATH * 2];
+    DWORD size = sizeof(buf);
+    if (RegGetValueW(HKEY_CURRENT_USER, kRegKey, name, RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS)
+        return {};
+    return buf;
+}
+
+// A folder this installer wrote: scda.exe next to game\SC4_Offline.img.
+static bool IsInstallDir(const std::wstring& dir)
+{
+    return !dir.empty() && GetFileAttributesW((dir + L"\\scda.exe").c_str()) != INVALID_FILE_ATTRIBUTES &&
+        GetFileAttributesW((dir + L"\\game\\SC4_Offline.img").c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+// The registry record, else the folder our Start menu / Desktop shortcut points at (installs made
+// before the record existed). Empty when there is none.
+static std::wstring FindInstall()
+{
+    std::wstring dir = ReadRecord(L"InstallLocation");
+    if (IsInstallDir(dir))
+        return dir;
+    for (REFKNOWNFOLDERID id : { FOLDERID_Programs, FOLDERID_Desktop })
+    {
+        std::wstring lnk = KnownDir(id);
+        if (lnk.empty()) continue;
+        lnk += L"\\";
+        lnk += kShortcut;
+        IShellLinkW* link;
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+            continue;
+        IPersistFile* file;
+        wchar_t target[MAX_PATH] = {};
+        if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))))
+        {
+            if (SUCCEEDED(file->Load(lnk.c_str(), STGM_READ)))
+                link->GetPath(target, MAX_PATH, nullptr, SLGP_RAWPATH);
+            file->Release();
+        }
+        link->Release();
+        dir = target;
+        const size_t slash = dir.find_last_of(L'\\');
+        if (slash != std::wstring::npos)
+            dir.resize(slash);
+        if (IsInstallDir(dir))
+            return dir;
+    }
+    return {};
+}
+
 // Creates d and any missing parents, recording each folder it made.
 static void MakeDirs(const std::wstring& d, std::vector<std::wstring>& made)
 {
@@ -355,9 +428,56 @@ static void Install(std::wstring iso, std::wstring dir, bool scDesktop, bool scS
     }
     CoUninitialize();
 
+    SaveInstallRecord(dir);
     PostMessageW(g_wnd, WM_APP_PROGRESS, 1000, 0);
     g_ok = true;
     PostStatus(L"Done. Installed to " + dir + L"  (developer preview)");
+    PostMessageW(g_wnd, WM_APP_DONE, 1, 0);
+}
+
+// ---- Update worker ----
+
+// Replaces scda.exe in an existing install with the embedded one. Needs no ISO: the game data
+// stay, so the image must be the one this scda.exe was recompiled from.
+static void Update(std::wstring dir)
+{
+    auto fail = [&](const std::wstring& msg)
+    {
+        g_error = msg;
+        if (g_headless) PostStatus(msg);
+        else PostMessageW(g_wnd, WM_APP_DONE, 0, 0);
+    };
+    const std::wstring exe = dir + L"\\scda.exe", staged = dir + L"\\scda.exe.new";
+    if (!IsInstallDir(dir))
+        return fail(L"No installed game was found in " + dir + L".");
+
+    // A running exe cannot be opened for writing.
+    HANDLE h = CreateFileW(exe.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return fail(L"The game is running (or scda.exe is in use). Close it and try again.");
+    CloseHandle(h);
+
+    PostStatus(L"Checking the installed game data\x2026");
+    PostMessageW(g_wnd, WM_APP_PROGRESS, 100, 0);
+    if (Sha256File(dir + L"\\game\\SC4_Offline.img") != kExpectedImageSha256)
+        return fail(L"The installed game data do not match this version. Choose Full reinstall instead.");
+
+    PostStatus(L"Installing scda.exe\x2026");
+    PostMessageW(g_wnd, WM_APP_PROGRESS, 600, 0);
+    if (!WriteResource(IDR_SCDA_EXE, staged))
+    {
+        DeleteFileW(staged.c_str());
+        return fail(L"Failed writing scda.exe.");
+    }
+    if (!MoveFileExW(staged.c_str(), exe.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        DeleteFileW(staged.c_str());
+        return fail(L"Could not replace scda.exe (is the game running?).");
+    }
+    SaveInstallRecord(dir);
+    PostMessageW(g_wnd, WM_APP_PROGRESS, 1000, 0);
+    g_ok = true;
+    PostStatus(L"Done. Updated " + dir + L" to version " + kVersion);
     PostMessageW(g_wnd, WM_APP_DONE, 1, 0);
 }
 
@@ -685,7 +805,33 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         g_wnd = hwnd;
         SetUpArtWindow(hwnd);
         SetDlgItemTextW(hwnd, ID_DIR_EDIT, (std::wstring(L"C:\\Games\\") + kFolderName).c_str());
+        PostMessageW(hwnd, WM_APP_ASK, 0, 0);
         return 0;
+    case WM_APP_ASK:
+    {
+        // Already installed: offer to update just scda.exe (no disc image needed).
+        const std::wstring dir = FindInstall();
+        if (dir.empty())
+            return 0;
+        SetDlgItemTextW(hwnd, ID_DIR_EDIT, dir.c_str());
+        std::wstring have = ReadRecord(L"Version");
+        if (have.empty()) have = L"unknown";
+        const std::wstring q = std::wstring(kAppName) + L" is installed in " + dir + L"\n(installed version " + have +
+            L", this installer " + kVersion + L").\n\nYes: update the game (keeps game data, settings and saves; no disc image needed)."
+            L"\nNo: full reinstall from the disc image.";
+        const int a = MessageBoxW(hwnd, q.c_str(), kAppName, MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (a == IDCANCEL)
+            DestroyWindow(hwnd);
+        else if (a == IDYES)
+        {
+            SetControlsEnabled(false);
+            g_running = g_updating = true;
+            g_cancel = false;
+            g_error.clear();
+            g_worker = std::thread(Update, dir);
+        }
+        return 0;
+    }
     case WM_ERASEBKGND:
         PaintArtBackground(hwnd, (HDC)wp);
         return 1;
@@ -771,7 +917,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (g_worker.joinable()) g_worker.join();
         if (wp)
         {
-            std::wstring msg = std::wstring(kAppName) + L" is installed.\n\nPlay now?";
+            std::wstring msg = std::wstring(kAppName) + (g_updating ? L" is updated." : L" is installed.") + L"\n\nPlay now?";
             if (MessageBoxW(hwnd, msg.c_str(), kAppName, MB_YESNO | MB_ICONINFORMATION) == IDYES)
             {
                 std::wstring dir = GetText(ID_DIR_EDIT);
@@ -786,6 +932,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetDlgItemTextW(hwnd, ID_STATUS, L"");
             SendDlgItemMessageW(hwnd, ID_PROGRESS, PBM_SETPOS, 0, 0);
             MessageBoxW(hwnd, g_error.empty() ? L"The installation did not finish." : g_error.c_str(), kAppName, MB_ICONERROR);
+            g_updating = false;
             SetControlsEnabled(true);
         }
         return 0;
@@ -805,15 +952,27 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     // Headless: SCDA_Setup.exe --iso <image> --dir <folder> [--no-shortcut]
+    //           SCDA_Setup.exe --update [--dir <folder>]   (default: the recorded/shortcut install)
     int argc;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     std::wstring iso, dir;
-    bool shortcut = true;
+    bool shortcut = true, update = false;
     for (int i = 1; i < argc; i++)
     {
         if (!wcscmp(argv[i], L"--iso") && i + 1 < argc) iso = argv[++i];
         else if (!wcscmp(argv[i], L"--dir") && i + 1 < argc) dir = argv[++i];
         else if (!wcscmp(argv[i], L"--no-shortcut")) shortcut = false;
+        else if (!wcscmp(argv[i], L"--update")) update = true;
+    }
+    if (update)
+    {
+        g_headless = true;
+        if (AttachConsole(ATTACH_PARENT_PROCESS))
+            freopen("CONOUT$", "w", stdout);
+        if (dir.empty()) dir = FindInstall();
+        if (dir.empty()) { PostStatus(L"No installed game was found."); return 1; }
+        Update(dir);
+        return g_ok ? 0 : 1;
     }
     if (!iso.empty() && !dir.empty())
     {
