@@ -10,7 +10,8 @@
 void StoreInputState(uint32_t addr, uint32_t packet, const XINPUT_GAMEPAD& g);
 
 // Keyboard/mouse buttons -> gamepad: Enter/Space A, Backspace/Ctrl B, E X, Q Y, Esc Start, Tab Back,
-// arrows d-pad, WASD left stick, IJKL right stick, Z/right mouse LT, C/left mouse RT, 1/3 shoulders.
+// arrows d-pad, WASD left stick, IJKL right stick, Z/right mouse LT, C/left mouse RT, 1/3 shoulders,
+// F left stick click, R/middle mouse right stick click (the keyboard prompts in prompts.cpp show these).
 XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk));
 
 // Mouse look. The window thread adds raw motion and wheel notches; each XamInputGetState poll

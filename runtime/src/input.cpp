@@ -12,6 +12,7 @@
 #include <gpu/frame_queue.h>
 #include <input.h>
 #include <pad.h>
+#include <prompts.h>
 #include <runtime.h>
 #include <settings.h>
 
@@ -38,6 +39,7 @@ XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
         { VK_ESCAPE, XINPUT_GAMEPAD_START }, { VK_TAB, XINPUT_GAMEPAD_BACK }, { VK_UP, XINPUT_GAMEPAD_DPAD_UP },
         { VK_DOWN, XINPUT_GAMEPAD_DPAD_DOWN }, { VK_LEFT, XINPUT_GAMEPAD_DPAD_LEFT }, { VK_RIGHT, XINPUT_GAMEPAD_DPAD_RIGHT },
         { '1', XINPUT_GAMEPAD_LEFT_SHOULDER }, { '3', XINPUT_GAMEPAD_RIGHT_SHOULDER },
+        { 'F', XINPUT_GAMEPAD_LEFT_THUMB }, { 'R', XINPUT_GAMEPAD_RIGHT_THUMB }, { VK_MBUTTON, XINPUT_GAMEPAD_RIGHT_THUMB },
     };
     XINPUT_GAMEPAD g{};
     for (auto& b : kButtons)
@@ -223,13 +225,20 @@ SCDA_IMPORT(XamInputGetState)
     }();
     static const InputSettings mouse = LoadInputSettings(SettingsPath());
     XINPUT_GAMEPAD g;
-    bool connected = PadGetState(g);
+    PadKind kind;
+    bool connected = PadGetState(g, &kind);
+    const bool padActive = connected && (g.wButtons || g.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD ||
+        g.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD || !StickIdle(g.sThumbLX, g.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) ||
+        !StickIdle(g.sThumbRX, g.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE));
+    bool keyboardActive = false;
     int dx, dy, wheel;
     MouseTake(dx, dy, wheel); // drained every poll so unfocused motion never piles up
     // A scripted run ignores the keyboard and mouse, so typing elsewhere cannot leak into it.
     if (script.empty() && GameWindowFocused())
     {
         XINPUT_GAMEPAD k = KeyboardGamepad(KeyDown);
+        keyboardActive = k.wButtons || k.bLeftTrigger || k.bRightTrigger || k.sThumbLX || k.sThumbLY || k.sThumbRX || k.sThumbRY ||
+            (mouse.mouseLook && (dx || dy || wheel));
         g.wButtons |= k.wButtons;
         g.bLeftTrigger |= k.bLeftTrigger;
         g.bRightTrigger |= k.bRightTrigger;
@@ -246,6 +255,7 @@ SCDA_IMPORT(XamInputGetState)
         if (mouse.mouseLook && wheel)
             g.wButtons |= wheel > 0 ? XINPUT_GAMEPAD_DPAD_UP : XINPUT_GAMEPAD_DPAD_DOWN;
     }
+    PromptNoteInput(kind, padActive, keyboardActive);
     if (InputBlocked())
         g = XINPUT_GAMEPAD{};
     else

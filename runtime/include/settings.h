@@ -35,6 +35,7 @@ struct InputSettings
     float mouseSensitivity = 1.0f; // full stick deflection at 50 / sensitivity pixels per poll (0.1..10)
     bool mouseInvertY = false;
     bool sdlGamepads = true;       // [Input] PlayStationNative: SDL3 gamepads (PlayStation, Switch) when no XInput pad
+    std::string buttonPrompts = "Auto"; // [Input] ButtonPrompts: Auto|Xbox|PlayStation|Keyboard (prompts.h)
 };
 
 struct UpdateSettings
@@ -44,7 +45,7 @@ struct UpdateSettings
 };
 
 DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini); // defaults if missing/invalid
-InputSettings LoadInputSettings(const std::filesystem::path& ini);     // [Input] MouseLook, MouseSensitivity, MouseInvertY, PlayStationNative
+InputSettings LoadInputSettings(const std::filesystem::path& ini);     // [Input] MouseLook, MouseSensitivity, MouseInvertY, PlayStationNative, ButtonPrompts
 UpdateSettings LoadUpdateSettings(const std::filesystem::path& ini);
 // Writes key=value into [section], replacing the key's line (any case) or adding it (and the
 // section). Other lines are kept as they are. Written to a temporary file, then renamed over.

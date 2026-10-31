@@ -48,6 +48,8 @@ InputSettings LoadInputSettings(const std::filesystem::path& ini)
             s.mouseInvertY = Truthy(value);
         else if (key == "playstationnative")
             s.sdlGamepads = Truthy(value);
+        else if (key == "buttonprompts")
+            s.buttonPrompts = value;
         else if (key == "mousesensitivity")
         {
             float v = float(atof(value.c_str()));
