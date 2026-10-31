@@ -977,6 +977,29 @@ static bool DepthOnlyOverwritesColor(const RegisterFile& regs)
         (regs[kRegRbColorInfo] & 0xFFF) == (regs[kRegRbDepthInfo] & 0xFFF);
 }
 
+// Dword n of vertex 0 of a draw's vertex fetch slot 0 (big-endian float), from the draw's vertex
+// snapshots; NaN when none covers it. D3D clear quads (VS 10e10ea9): dwords 0-2 position, 3-6 colour.
+static float SnapshotVertexDword(const DrawCall& d, const Frame& frame, const RegisterFile& regs, uint32_t n)
+{
+    const uint32_t f0 = regs[kRegFetchConstants];
+    if ((f0 & 3) != 3)
+        return NAN;
+    const uint32_t at = (f0 & 0x1FFFFFFC) + 4 * n;
+    for (uint32_t mi : d.memory)
+    {
+        if (mi >= frame.memory.size())
+            continue;
+        const Frame::Snapshot& snap = frame.memory[mi];
+        const uint32_t base = uint32_t(snap.key >> 32);
+        if (at < base || uint64_t(at) + 4 > uint64_t(base) + snap.bytes.size())
+            continue;
+        uint32_t w;
+        memcpy(&w, &snap.bytes[at - base], 4);
+        return std::bit_cast<float>(_byteswap_ulong(w));
+    }
+    return NAN;
+}
+
 // The EDRAM dword an aliased depth-only clear leaves, as RGBA of an 8_8_8_8 colour target: D24S8 /
 // D24FS8 keep stencil in bits 0-7 and depth above; 8_8_8_8 keeps R in bits 0-7 (Xenia EDRAM layouts).
 // The clear depth is the viewport z offset (the clear draws z ~ 0: depth 1 has scale -1, offset 1),
@@ -984,6 +1007,11 @@ static bool DepthOnlyOverwritesColor(const RegisterFile& regs)
 // depth 1, stencil 0: (0, 1, 1, 1) = lit. Writing 0 left the whole ground in shadow.
 // Open: the sniper scope's bottom band (docs/remaining_bugs.md) reads this mask's alpha after a blur
 // pass and shows cyan again; stencil-in-A removed the band but put the ground back in shadow.
+// DOUBT (2026-10-31): the clear quads' own data say the mask starts at 0: the 4x alias quad has
+// z 0 under VTE 0x300 (raw z, viewport z transform off) and the 1x colour quad (rows 352-360)
+// colour (0, 0, 0, 0) (SCDA_TRACE_DEPTH_ALIAS clear quad lines). With 0 the Jail floor gets its
+// window patches but Kinshasa's ground goes dark, so (0, 1, 1, 1) likely hides another bug in
+// material PS 63053924 (its s13 baked-shadow term). docs/remaining_bugs.md.
 // shortcut: other colour formats get 0.
 static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
 {
@@ -1745,6 +1773,11 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         return;
     }
     const uint32_t texSlots = ShaderTextureFetchSlots(*d.vs) | ShaderTextureFetchSlots(*d.ps);
+    static const bool traceClearQuads = getenv("SCDA_TRACE_DEPTH_ALIAS") != nullptr;
+    if (traceClearQuads && d.vs->hash == 0x10e10ea90b97dff6ull) // D3D clear quads: vertex 0 z + colour
+        RuntimeLog("[zalias] frame %llu clear quad color %08X mode %u z %g colour %g %g %g %g\n", m_presented, r.regs[kRegRbColorInfo],
+            r.regs[kRegRbModeControl] & 7, double(SnapshotVertexDword(d, frame, r.regs, 2)), double(SnapshotVertexDword(d, frame, r.regs, 3)),
+            double(SnapshotVertexDword(d, frame, r.regs, 4)), double(SnapshotVertexDword(d, frame, r.regs, 5)), double(SnapshotVertexDword(d, frame, r.regs, 6)));
     if (r.stateDirty || (texSlots & ~r.lastTexSlots))
     {
         r.lastTexSlots = r.stateDirty ? texSlots : r.lastTexSlots | texSlots;

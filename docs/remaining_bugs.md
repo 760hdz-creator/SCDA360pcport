@@ -59,6 +59,20 @@ Evidence paths under `_run/` are local only (git-ignored).
   of B (swizzle without the resolve's red/blue swap) also gives the patches but turns bloom yellow -> cyan.
   Unresolved: maybe Kinshasa should issue additive light passes too (occlusion / visibility), or the EDRAM
   alias semantics differ.
+- **Clear quads' own data (2026-10-31, `SCDA_TRACE_DEPTH_ALIAS=1` "clear quad" lines):** the mask clear is
+  two quads of VS 10e10ea9: a 4x depth/stencil alias (mode 5) over rows 0-352 and a 1x colour quad over rows
+  352-360 (the only rows the alias misses: that strip was the NY/Hotel "bottom band"). Both quads have
+  vertex z 0 (VTE 0x300 = raw z, the zs -1 / zo 1 viewport is not applied) and vertex colour (0, 0, 0, 0)
+  (dwords 3-6). PS c0 (0, 0, 0, 0.533/0.502) is a stale constant: the clear PS outputs the interpolator.
+  So by the data the whole mask starts at 0 (depth 0, stencil 0 = dword 0). That gives Jail's patches.
+  `AliasedClearColor`'s (0, 1, 1, 1) uses zo, which VTE 0x300 does not apply. It probably hides another bug
+  that darkens Kinshasa when B = 0. The material computes `r1.w = mask.B + s13.<ch> + mask.R * c253.w`,
+  then `min(r1.w, mask.A)`, where s13 is a DXT1 (fmt 18) baked-shadow texture and the channel is chosen by
+  the sign of c15.z. Next: check that term on Kinshasa's lit ground (s13 decode/channel, c15/c253).
+- **Ruled out:** negative light alpha (PS b5531808 outputs `0.111 * sum(shadow tests * c2.y * cookie)` >= 0,
+  c2 = (0, .8, 0, 0), so the unclamped-source idea does not apply). Alias off (`SCDA_NO_DEPTH_COLOR_ALIAS=1`)
+  shows Jail patches, but only because rows 0-352 keep the previous frame's mask. Kinshasa then gets a black
+  bottom strip (the 0-alpha colour quad).
 - **Done meanwhile (translator v18):** resolve copies are bound raw, so the shader now applies the fetch swizzle
   composed with the resolve's dest swap (RB_COPY_DEST_INFO bit 24). For ARGB resolves this cancels (no change);
   fmt 36 / 31 resolves now read (r, 1, 1, 1) / (r, g, 1, 1) and A0A forces alpha 1. A/B (`SCDA_NO_RESOLVE_SWIZZLE=1`)
