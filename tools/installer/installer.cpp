@@ -7,10 +7,14 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <commctrl.h>
-#include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
+#include <uxtheme.h>
+#include <wincodec.h>
+#include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -23,20 +27,23 @@ static const char* kExpectedXexSha256 = "86d32713b57feb6631f0810a9416046beb3a215
 // SHA-256 of the flat image xex_dump builds from it (config/expected_image.txt).
 static const char* kExpectedImageSha256 = "01193b2556abc03506ad9c0d40f30b04ce27d027e27a59cf786eeb90b53aea4e";
 
+static const wchar_t kAppName[]    = L"Splinter Cell: Double Agent (Recomp)";
+static const wchar_t kFolderName[] = L"SCDA-Recomp";
+static const wchar_t kShortcut[]   = L"Splinter Cell Double Agent (Recomp).lnk";
+
 constexpr uint32_t SECTOR = 2048;
 constexpr uint64_t kXgdBases[] = { 0, 0x18300000, 0xFD90000, 0x2080000 }; // xiso, XGD3, XGD2, XGD1
-constexpr int W = 960, H = 540;
 
-enum { ID_ISO_EDIT = 100, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_INSTALL, ID_PROGRESS, ID_STATUS, ID_SHORTCUT };
+enum { ID_ISO_EDIT = 100, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_INSTALL, ID_PROGRESS, ID_STATUS,
+       ID_SC_DESKTOP, ID_SC_STARTMENU, ID_CREDIT };
 constexpr UINT WM_APP_STATUS = WM_APP + 1, WM_APP_PROGRESS = WM_APP + 2, WM_APP_DONE = WM_APP + 3;
 
-static HWND g_wnd, g_isoEdit, g_dirEdit, g_install, g_progress, g_status, g_shortcut;
-static HBITMAP g_background;
-static HFONT g_font;
+static HWND g_wnd;
+static bool g_headless, g_ok;
+static std::wstring g_error;
+static std::atomic<bool> g_cancel;
 
 struct Entry { std::wstring path; uint32_t sector, size; bool dir; };
-
-static bool g_headless, g_ok;
 
 static void PostStatus(const std::wstring& s)
 {
@@ -178,34 +185,59 @@ static bool BuildImage(const std::wstring& game)
     return code == 0 && Sha256File(game + L"\\SC4_Offline.img") == kExpectedImageSha256;
 }
 
-static void CreateDesktopShortcut(const std::wstring& target, const std::wstring& workDir)
+static std::wstring KnownDir(REFKNOWNFOLDERID id)
 {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    PWSTR p = nullptr;
+    std::wstring out;
+    if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &p)) && p) { out = p; CoTaskMemFree(p); }
+    return out;
+}
+
+static void MakeShortcut(const std::wstring& lnk, const std::wstring& target, const std::wstring& workDir)
+{
     IShellLinkW* link;
-    if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))))
+        return;
+    link->SetPath(target.c_str());
+    link->SetWorkingDirectory(workDir.c_str());
+    link->SetIconLocation(target.c_str(), 0);
+    link->SetDescription(kAppName);
+    IPersistFile* file;
+    if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))))
     {
-        link->SetPath(target.c_str());
-        link->SetWorkingDirectory(workDir.c_str());
-        link->SetIconLocation(target.c_str(), 0);
-        link->SetDescription(L"Splinter Cell: Double Agent (Recomp)");
-        IPersistFile* file;
-        PWSTR desktop;
-        if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file))) && SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Desktop, 0, nullptr, &desktop)))
-        {
-            file->Save((std::wstring(desktop) + L"\\Splinter Cell Double Agent (Recomp).lnk").c_str(), TRUE);
-            CoTaskMemFree(desktop);
-            file->Release();
-        }
-        link->Release();
+        file->Save(lnk.c_str(), TRUE);
+        file->Release();
     }
-    CoUninitialize();
+    link->Release();
+}
+
+// Creates d and any missing parents, recording each folder it made.
+static void MakeDirs(const std::wstring& d, std::vector<std::wstring>& made)
+{
+    if (d.size() <= 3 || GetFileAttributesW(d.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return;
+    size_t slash = d.find_last_of(L'\\');
+    if (slash != std::wstring::npos)
+        MakeDirs(d.substr(0, slash), made);
+    if (CreateDirectoryW(d.c_str(), nullptr))
+        made.push_back(d);
 }
 
 // ---- Install worker ----
 
-static void Install(std::wstring iso, std::wstring dir, bool shortcut)
+static void Install(std::wstring iso, std::wstring dir, bool scDesktop, bool scStartMenu)
 {
-    auto fail = [&](const std::wstring& msg) { PostStatus(msg); PostMessageW(g_wnd, WM_APP_DONE, 0, 0); };
+    // A failed or cancelled install deletes what it wrote: files, then the folders it created.
+    std::vector<std::wstring> wroteFiles, madeDirs;
+    auto makeDir = [&](const std::wstring& d) { MakeDirs(d, madeDirs); };
+    auto fail = [&](const std::wstring& msg)
+    {
+        for (auto& p : wroteFiles) DeleteFileW(p.c_str());
+        for (auto it = madeDirs.rbegin(); it != madeDirs.rend(); ++it) RemoveDirectoryW(it->c_str());
+        g_error = msg;
+        if (g_headless) PostStatus(msg);
+        else PostMessageW(g_wnd, WM_APP_DONE, 0, 0);
+    };
 
     HANDLE f = CreateFileW(iso.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (f == INVALID_HANDLE_VALUE)
@@ -218,7 +250,7 @@ static void Install(std::wstring iso, std::wstring dir, bool shortcut)
         return fail(L"Not an Xbox 360 disc image (no XDVDFS volume).");
     }
 
-    PostStatus(L"Reading disc layout...");
+    PostStatus(L"Reading disc layout\x2026");
     std::vector<Entry> entries;
     WalkDir(f, base, rootSector, rootSize, L"", entries);
 
@@ -236,7 +268,8 @@ static void Install(std::wstring iso, std::wstring dir, bool shortcut)
     }
 
     std::wstring game = dir + L"\\game";
-    SHCreateDirectoryExW(nullptr, game.c_str(), nullptr);
+    makeDir(dir);
+    makeDir(game);
 
     // Verify the executable first so a wrong disc fails fast.
     std::vector<uint8_t> buf(4 << 20);
@@ -246,29 +279,31 @@ static void Install(std::wstring iso, std::wstring dir, bool shortcut)
         std::wstring out = game + L"\\" + e.path;
         HANDLE o = CreateFileW(out.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
         if (o == INVALID_HANDLE_VALUE) return false;
+        wroteFiles.push_back(out);
         uint64_t off = base + uint64_t(e.sector) * SECTOR;
         uint32_t left = e.size;
         while (left)
         {
             DWORD n = std::min<uint32_t>(left, (uint32_t)buf.size()), wrote;
-            if (!ReadAt(f, off, buf.data(), n) || !WriteFile(o, buf.data(), n, &wrote, nullptr))
+            if (g_cancel || !ReadAt(f, off, buf.data(), n) || !WriteFile(o, buf.data(), n, &wrote, nullptr))
             {
                 CloseHandle(o);
                 return false;
             }
             off += n; left -= n; done += n;
-            PostMessageW(g_wnd, WM_APP_PROGRESS, (WPARAM)(total ? done * 1000 / total : 0), 0);
+            PostMessageW(g_wnd, WM_APP_PROGRESS, (WPARAM)(total ? done * 950 / total : 0), 0);
         }
         CloseHandle(o);
         return true;
     };
+    auto cancelled = [&] { CloseHandle(f); fail(L"Installation cancelled."); };
 
     for (auto& e : entries)
     {
         if (!_wcsicmp(e.path.c_str(), L"SC4_Offline.xex"))
         {
-            PostStatus(L"Verifying SC4_Offline.xex...");
-            if (!extract(e)) { CloseHandle(f); return fail(L"Failed writing SC4_Offline.xex."); }
+            PostStatus(L"Verifying SC4_Offline.xex\x2026");
+            if (!extract(e)) { if (g_cancel) return cancelled(); CloseHandle(f); return fail(L"Failed writing SC4_Offline.xex."); }
             if (Sha256File(game + L"\\SC4_Offline.xex") != kExpectedXexSha256)
             {
                 CloseHandle(f);
@@ -279,28 +314,46 @@ static void Install(std::wstring iso, std::wstring dir, bool shortcut)
 
     for (auto& e : entries)
     {
+        if (g_cancel) return cancelled();
         if (e.dir)
         {
-            SHCreateDirectoryExW(nullptr, (game + L"\\" + e.path).c_str(), nullptr);
+            makeDir(game + L"\\" + e.path);
             continue;
         }
         if (!_wcsicmp(e.path.c_str(), L"SC4_Offline.xex"))
             continue;
         PostStatus(L"Extracting " + e.path);
-        if (!extract(e)) { CloseHandle(f); return fail(L"Failed extracting " + e.path); }
+        if (!extract(e)) { if (g_cancel) return cancelled(); CloseHandle(f); return fail(L"Failed extracting " + e.path); }
     }
     CloseHandle(f);
 
-    PostStatus(L"Building SC4_Offline.img...");
+    PostStatus(L"Building SC4_Offline.img\x2026");
+    wroteFiles.push_back(game + L"\\SC4_Offline.img");
+    wroteFiles.push_back(game + L"\\SC4_Offline.xexhdr");
     if (!BuildImage(game))
         return fail(L"Failed building SC4_Offline.img from SC4_Offline.xex.");
+    PostMessageW(g_wnd, WM_APP_PROGRESS, 980, 0);
 
-    PostStatus(L"Installing scda.exe...");
+    PostStatus(L"Installing scda.exe\x2026");
     std::wstring exe = dir + L"\\scda.exe";
+    wroteFiles.push_back(exe);
     if (!WriteResource(IDR_SCDA_EXE, exe))
         return fail(L"Failed writing scda.exe.");
-    if (shortcut)
-        CreateDesktopShortcut(exe, dir);
+
+    PostStatus(L"Creating shortcuts\x2026");
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (scDesktop)
+    {
+        std::wstring d = KnownDir(FOLDERID_Desktop);
+        if (!d.empty()) MakeShortcut(d + L"\\" + kShortcut, exe, dir);
+    }
+    if (scStartMenu)
+    {
+        // Per-user Start menu: this installer runs without administrator rights.
+        std::wstring s = KnownDir(FOLDERID_Programs);
+        if (!s.empty()) MakeShortcut(s + L"\\" + kShortcut, exe, dir);
+    }
+    CoUninitialize();
 
     PostMessageW(g_wnd, WM_APP_PROGRESS, 1000, 0);
     g_ok = true;
@@ -308,55 +361,320 @@ static void Install(std::wstring iso, std::wstring dir, bool shortcut)
     PostMessageW(g_wnd, WM_APP_DONE, 1, 0);
 }
 
+// ---- Artwork ----
+//
+// The window is res/installer_bg.png (IDR_INSTALLER_BG): the art draws the fields and buttons,
+// and the real controls sit on top of them. Edits get the field colour; buttons are owner-drawn
+// from the art itself (plus a hover/press tint). Below the art a plain strip holds what the art has
+// no place for: progress, status, the shortcut boxes and the credit. Everything scales with the art.
+
+static const int kArtW = 1671, kArtH = 941, kStripH = 80; // art pixels
+static const COLORREF kFieldColor = RGB(11, 26, 22), kStripColor = RGB(5, 10, 7);
+static const COLORREF kTextColor = RGB(226, 238, 228), kDimColor = RGB(140, 160, 145);
+static const COLORREF kAccent = RGB(80, 230, 40);
+
+// Interiors of the two drawn fields: painted over with kFieldColor (they hold sample text).
+static const RECT kArtFields[] = { { 489, 621, 1068, 660 }, { 489, 716, 1068, 755 } };
+static const int  kFieldIds[]  = { ID_ISO_EDIT, ID_DIR_EDIT };
+struct ArtRect { int id; RECT r; };
+static const ArtRect kArtLayout[] = {
+    { ID_ISO_BROWSE, { 1090, 614, 1287, 664 } },
+    { ID_DIR_BROWSE, { 1090, 709, 1287, 760 } },
+    { ID_INSTALL,    {  415, 776, 1260, 870 } },
+    { IDCANCEL,      { 1595,   5, 1665,  70 } }, // the X drawn in the corner
+};
+
+static double  g_scale = 1;
+static HDC     g_artDC;  // the art at window size, field sample text painted out
+static HBITMAP g_artBmp, g_artOld;
+static HFONT   g_fieldFont, g_uiFont;
+static HBRUSH  g_fieldBrush, g_stripBrush;
+static std::thread g_worker;
+static bool    g_running;
+
+static int  S(int v) { return (int)lround(v * g_scale); }
+static RECT S(const RECT& r) { return { S(r.left), S(r.top), S(r.right), S(r.bottom) }; }
+
+static HBITMAP LoadArt(int w, int h)
+{
+    HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_INSTALLER_BG), RT_RCDATA);
+    HGLOBAL g = res ? LoadResource(nullptr, res) : nullptr;
+    BYTE* data = g ? (BYTE*)LockResource(g) : nullptr;
+    const DWORD size = res ? SizeofResource(nullptr, res) : 0;
+    if (!data || !size) return nullptr;
+    IWICImagingFactory* f = nullptr;
+    IWICStream* stream = nullptr;
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICBitmapScaler* scaler = nullptr;
+    IWICFormatConverter* conv = nullptr;
+    HBITMAP bmp = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&f))) &&
+        SUCCEEDED(f->CreateStream(&stream)) && SUCCEEDED(stream->InitializeFromMemory(data, size)) &&
+        SUCCEEDED(f->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &dec)) &&
+        SUCCEEDED(dec->GetFrame(0, &frame)) && SUCCEEDED(f->CreateBitmapScaler(&scaler)) &&
+        SUCCEEDED(scaler->Initialize(frame, (UINT)w, (UINT)h, WICBitmapInterpolationModeFant)) &&
+        SUCCEEDED(f->CreateFormatConverter(&conv)) &&
+        SUCCEEDED(conv->Initialize(scaler, GUID_WICPixelFormat32bppBGR, WICBitmapDitherTypeNone, nullptr, 0,
+                                   WICBitmapPaletteTypeCustom)))
+    {
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        void* bits = nullptr;
+        bmp = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (bmp && FAILED(conv->CopyPixels(nullptr, (UINT)w * 4, (UINT)w * 4 * (UINT)h, (BYTE*)bits)))
+        {
+            DeleteObject(bmp);
+            bmp = nullptr;
+        }
+    }
+    for (IUnknown* u : std::initializer_list<IUnknown*>{ conv, scaler, frame, dec, stream, f }) if (u) u->Release();
+    return bmp;
+}
+
+// A translucent wash over r (hover / press / disabled states of the drawn buttons).
+static void Tint(HDC dc, const RECT& r, COLORREF c, BYTE alpha)
+{
+    HDC src = CreateCompatibleDC(dc);
+    HBITMAP px = CreateCompatibleBitmap(dc, 1, 1);
+    HGDIOBJ old = SelectObject(src, px);
+    SetPixel(src, 0, 0, c);
+    BLENDFUNCTION bf = { AC_SRC_OVER, 0, alpha, 0 };
+    AlphaBlend(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, src, 0, 0, 1, 1, bf);
+    SelectObject(src, old);
+    DeleteObject(px);
+    DeleteDC(src);
+}
+
+// Hover tracking + hand cursor for the drawn buttons (hover flag in GWLP_USERDATA).
+static LRESULT CALLBACK ArtButtonProc(HWND h, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR)
+{
+    switch (msg)
+    {
+    case WM_MOUSEMOVE:
+        if (!GetWindowLongPtrW(h, GWLP_USERDATA))
+        {
+            SetWindowLongPtrW(h, GWLP_USERDATA, 1);
+            TRACKMOUSEEVENT t = { sizeof t, TME_LEAVE, h, 0 };
+            TrackMouseEvent(&t);
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        break;
+    case WM_MOUSELEAVE:
+        SetWindowLongPtrW(h, GWLP_USERDATA, 0);
+        InvalidateRect(h, nullptr, FALSE);
+        break;
+    case WM_SETCURSOR:
+        if (IsWindowEnabled(h)) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+        break;
+    }
+    return DefSubclassProc(h, msg, wp, lp);
+}
+
+static void DrawArtButton(HWND wnd, const DRAWITEMSTRUCT* di)
+{
+    RECT r = di->rcItem;
+    if (g_artDC)
+    {
+        RECT at;
+        GetWindowRect(di->hwndItem, &at);
+        MapWindowPoints(nullptr, wnd, (POINT*)&at, 2);
+        BitBlt(di->hDC, 0, 0, r.right, r.bottom, g_artDC, at.left, at.top, SRCCOPY);
+    }
+    else // no art: plain dark buttons with their captions
+    {
+        FillRect(di->hDC, &r, g_fieldBrush);
+        wchar_t text[64];
+        GetWindowTextW(di->hwndItem, text, 64);
+        SetBkMode(di->hDC, TRANSPARENT);
+        SetTextColor(di->hDC, kTextColor);
+        HGDIOBJ of = SelectObject(di->hDC, g_uiFont);
+        DrawTextW(di->hDC, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(di->hDC, of);
+    }
+    const bool hover = GetWindowLongPtrW(di->hwndItem, GWLP_USERDATA) != 0;
+    if (di->itemState & ODS_DISABLED) Tint(di->hDC, r, RGB(0, 0, 0), 130);
+    else if (di->itemState & ODS_SELECTED) Tint(di->hDC, r, RGB(0, 0, 0), 70);
+    else if (hover) Tint(di->hDC, r, di->CtlID == IDCANCEL ? kAccent : RGB(255, 255, 255), 45);
+    if ((di->itemState & ODS_FOCUS) && !(di->itemState & ODS_NOFOCUSRECT))
+    {
+        RECT f = r;
+        InflateRect(&f, -3, -3);
+        DrawFocusRect(di->hDC, &f);
+    }
+}
+
+static HWND Make(const wchar_t* cls, const wchar_t* text, DWORD style, int id)
+{
+    return CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 10, 10, g_wnd, (HMENU)(INT_PTR)id, nullptr, nullptr);
+}
+
+// Size the window to the art (scaled to fit the screen), paint the art and lay the controls out.
+static void SetUpArtWindow(HWND wnd)
+{
+    Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, ID_ISO_EDIT);
+    Make(L"BUTTON", L"Browse", BS_OWNERDRAW | WS_TABSTOP, ID_ISO_BROWSE);
+    Make(L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, ID_DIR_EDIT);
+    Make(L"BUTTON", L"Browse", BS_OWNERDRAW | WS_TABSTOP, ID_DIR_BROWSE);
+    Make(L"BUTTON", L"Create a &Desktop shortcut", BS_AUTOCHECKBOX | WS_TABSTOP, ID_SC_DESKTOP);
+    Make(L"BUTTON", L"Add to the &Start menu", BS_AUTOCHECKBOX | WS_TABSTOP, ID_SC_STARTMENU);
+    Make(L"BUTTON", L"Install game", BS_OWNERDRAW | WS_TABSTOP, ID_INSTALL);
+    Make(L"BUTTON", L"X", BS_OWNERDRAW | WS_TABSTOP, IDCANCEL);
+    Make(PROGRESS_CLASSW, L"", 0, ID_PROGRESS);
+    Make(L"STATIC", L"Select your own Splinter Cell: Double Agent (Xbox 360) disc image.", SS_LEFT | SS_ENDELLIPSIS, ID_STATUS);
+    Make(L"STATIC", L"by 8gram Labs", SS_RIGHT, ID_CREDIT);
+
+    RECT work;
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    const int workW = work.right - work.left, workH = work.bottom - work.top;
+    g_scale = std::min({ 1.0, 0.9 * workW / kArtW, 0.9 * workH / (kArtH + kStripH) });
+    const int w = S(kArtW), artH = S(kArtH), h = S(kArtH + kStripH);
+    SetWindowPos(wnd, nullptr, work.left + (workW - w) / 2, work.top + (workH - h) / 2, w, h, SWP_NOZORDER);
+
+    g_fieldBrush = CreateSolidBrush(kFieldColor);
+    g_stripBrush = CreateSolidBrush(kStripColor);
+    g_fieldFont = CreateFontW(-std::max(12, S(19)), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
+                              CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    g_uiFont = CreateFontW(-std::max(12, S(16)), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0,
+                           CLEARTYPE_QUALITY, 0, L"Segoe UI");
+
+    if (HBITMAP bmp = LoadArt(w, artH))
+    {
+        HDC screen = GetDC(nullptr);
+        g_artDC = CreateCompatibleDC(screen);
+        ReleaseDC(nullptr, screen);
+        g_artBmp = bmp;
+        g_artOld = (HBITMAP)SelectObject(g_artDC, g_artBmp);
+        for (const RECT& f : kArtFields) { RECT r = S(f); FillRect(g_artDC, &r, g_fieldBrush); }
+    }
+
+    for (const ArtRect& a : kArtLayout)
+    {
+        const RECT r = S(a.r);
+        HWND c = GetDlgItem(wnd, a.id);
+        MoveWindow(c, r.left, r.top, r.right - r.left, r.bottom - r.top, FALSE);
+        SetWindowSubclass(c, ArtButtonProc, 0, 0);
+    }
+    const int fieldTextH = std::max(12, S(19)) + 6;
+    for (int i = 0; i < 2; ++i)
+    {
+        const RECT r = S(kArtFields[i]);
+        const int cy = (r.top + r.bottom) / 2;
+        HWND e = GetDlgItem(wnd, kFieldIds[i]);
+        SendMessageW(e, WM_SETFONT, (WPARAM)g_fieldFont, FALSE);
+        MoveWindow(e, r.left + S(10), cy - fieldTextH / 2, r.right - r.left - S(20), fieldTextH, FALSE);
+    }
+    SendDlgItemMessageW(wnd, ID_ISO_EDIT, EM_SETCUEBANNER, TRUE, (LPARAM)L"No ISO selected\x2026");
+
+    // The strip, lined up with the Install button.
+    const int left = S(420), right = S(1255);
+    HWND progress = GetDlgItem(wnd, ID_PROGRESS);
+    SetWindowTheme(progress, L"", L""); // unthemed, so it takes the colours below
+    SendMessageW(progress, PBM_SETRANGE32, 0, 1000);
+    SendMessageW(progress, PBM_SETBARCOLOR, 0, kAccent);
+    SendMessageW(progress, PBM_SETBKCOLOR, 0, RGB(18, 30, 22));
+    MoveWindow(progress, left, artH + S(12), right - left, std::max(6, S(10)), FALSE);
+    const int rowH = std::max(12, S(16)) + 6;
+    MoveWindow(GetDlgItem(wnd, ID_STATUS), left, artH + S(28), right - left, rowH, FALSE);
+    int x = left;
+    HDC dc = GetDC(wnd);
+    HGDIOBJ of = SelectObject(dc, g_uiFont);
+    for (int id : { ID_SC_DESKTOP, ID_SC_STARTMENU })
+    {
+        HWND c = GetDlgItem(wnd, id);
+        SetWindowTheme(c, L"", L""); // themed check boxes ignore WM_CTLCOLORSTATIC's text colour
+        CheckDlgButton(wnd, id, BST_CHECKED);
+        wchar_t text[64];
+        GetWindowTextW(c, text, 64);
+        SIZE sz = {};
+        GetTextExtentPoint32W(dc, text, (int)wcslen(text), &sz);
+        const int cw = sz.cx + GetSystemMetrics(SM_CXMENUCHECK) + S(12);
+        MoveWindow(c, x, artH + S(52), cw, rowH, FALSE);
+        x += cw + S(24);
+    }
+    SelectObject(dc, of);
+    ReleaseDC(wnd, dc);
+    MoveWindow(GetDlgItem(wnd, ID_CREDIT), x, artH + S(52), right - x, rowH, FALSE);
+    for (int id : { ID_SC_DESKTOP, ID_SC_STARTMENU, ID_STATUS, ID_CREDIT })
+        SendDlgItemMessageW(wnd, id, WM_SETFONT, (WPARAM)g_uiFont, FALSE);
+}
+
+static void PaintArtBackground(HWND wnd, HDC dc)
+{
+    RECT c;
+    GetClientRect(wnd, &c);
+    const int artH = S(kArtH);
+    if (g_artDC) BitBlt(dc, 0, 0, c.right, artH, g_artDC, 0, 0, SRCCOPY);
+    else { RECT a = { 0, 0, c.right, artH }; FillRect(dc, &a, g_stripBrush); }
+    RECT strip = { 0, artH, c.right, c.bottom };
+    FillRect(dc, &strip, g_stripBrush);
+    HBRUSH line = CreateSolidBrush(kAccent);
+    RECT l = { 0, artH, c.right, artH + std::max(1, S(2)) };
+    FillRect(dc, &l, line);
+    DeleteObject(line);
+}
+
+static void FreeArt()
+{
+    if (g_artDC) { SelectObject(g_artDC, g_artOld); DeleteDC(g_artDC); g_artDC = nullptr; }
+    if (g_artBmp) { DeleteObject(g_artBmp); g_artBmp = nullptr; }
+    for (HGDIOBJ* o : { (HGDIOBJ*)&g_fieldFont, (HGDIOBJ*)&g_uiFont, (HGDIOBJ*)&g_fieldBrush, (HGDIOBJ*)&g_stripBrush })
+        if (*o) { DeleteObject(*o); *o = nullptr; }
+}
+
 // ---- UI ----
 
-static std::wstring GetText(HWND h)
+static std::wstring GetText(int id)
 {
+    HWND h = GetDlgItem(g_wnd, id);
     std::wstring s(GetWindowTextLengthW(h), L'\0');
     GetWindowTextW(h, s.data(), (int)s.size() + 1);
     return s;
 }
 
-static void BrowseIso()
+static std::wstring Pick(bool folder)
 {
-    wchar_t path[MAX_PATH] = L"";
-    OPENFILENAMEW ofn{ sizeof(ofn) };
-    ofn.hwndOwner = g_wnd;
-    ofn.lpstrFilter = L"Xbox 360 disc image (*.iso)\0*.iso\0All files\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    if (GetOpenFileNameW(&ofn))
-        SetWindowTextW(g_isoEdit, path);
-}
-
-static void BrowseDir()
-{
+    std::wstring out;
     IFileOpenDialog* dlg;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg))))
-        return;
+        return out;
     DWORD opts;
     dlg->GetOptions(&opts);
-    dlg->SetOptions(opts | FOS_PICKFOLDERS);
+    if (folder)
+    {
+        dlg->SetOptions(opts | FOS_PICKFOLDERS);
+        dlg->SetTitle(L"Choose where to install");
+    }
+    else
+    {
+        const COMDLG_FILTERSPEC f[] = { { L"Xbox 360 disc image (*.iso)", L"*.iso" }, { L"All files", L"*.*" } };
+        dlg->SetOptions(opts | FOS_FILEMUSTEXIST);
+        dlg->SetFileTypes(2, f);
+        dlg->SetTitle(L"Choose your Splinter Cell: Double Agent disc image");
+    }
     IShellItem* item;
     if (SUCCEEDED(dlg->Show(g_wnd)) && SUCCEEDED(dlg->GetResult(&item)))
     {
         PWSTR p;
         if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &p)))
         {
-            SetWindowTextW(g_dirEdit, (std::wstring(p) + L"\\SCDA Recomp").c_str());
+            out = p;
             CoTaskMemFree(p);
         }
         item->Release();
     }
     dlg->Release();
+    return out;
 }
 
-static HWND Make(const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int id)
+static void SetControlsEnabled(bool on)
 {
-    HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, g_wnd, (HMENU)(INT_PTR)id, nullptr, nullptr);
-    SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
-    return c;
+    for (int id : { ID_ISO_EDIT, ID_ISO_BROWSE, ID_DIR_EDIT, ID_DIR_BROWSE, ID_SC_DESKTOP, ID_SC_STARTMENU, ID_INSTALL })
+        EnableWindow(GetDlgItem(g_wnd, id), on);
 }
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -364,89 +682,118 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg)
     {
     case WM_CREATE:
-    {
         g_wnd = hwnd;
-        g_font = CreateFontW(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
-        PWSTR pf;
-        std::wstring defDir = L"C:\\Games\\SCDA Recomp";
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramFilesX86, 0, nullptr, &pf)))
-            CoTaskMemFree(pf); // default stays outside Program Files: no admin rights needed
-        int y = H - 150;
-        Make(L"STATIC", L"Disc image:", SS_LEFT, 40, y + 3, 110, 22, 0);
-        g_isoEdit = Make(L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 150, y, 640, 24, ID_ISO_EDIT);
-        Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON, 800, y, 120, 26, ID_ISO_BROWSE);
-        y += 34;
-        Make(L"STATIC", L"Install to:", SS_LEFT, 40, y + 3, 110, 22, 0);
-        g_dirEdit = Make(L"EDIT", defDir.c_str(), WS_BORDER | ES_AUTOHSCROLL, 150, y, 640, 24, ID_DIR_EDIT);
-        Make(L"BUTTON", L"Browse...", BS_PUSHBUTTON, 800, y, 120, 26, ID_DIR_BROWSE);
-        y += 36;
-        g_progress = Make(PROGRESS_CLASSW, L"", 0, 40, y, 750, 20, ID_PROGRESS);
-        SendMessageW(g_progress, PBM_SETRANGE, 0, MAKELPARAM(0, 1000));
-        g_install = Make(L"BUTTON", L"Install", BS_DEFPUSHBUTTON, 800, y - 4, 120, 30, ID_INSTALL);
-        y += 28;
-        g_status = Make(L"STATIC", L"Select your own Splinter Cell: Double Agent (Xbox 360) disc image.", SS_LEFT, 40, y, 600, 22, ID_STATUS);
-        g_shortcut = Make(L"BUTTON", L"Desktop shortcut", BS_AUTOCHECKBOX, 760, y, 160, 22, ID_SHORTCUT);
-        SendMessageW(g_shortcut, BM_SETCHECK, BST_CHECKED, 0);
+        SetUpArtWindow(hwnd);
+        SetDlgItemTextW(hwnd, ID_DIR_EDIT, (std::wstring(L"C:\\Games\\") + kFolderName).c_str());
         return 0;
-    }
     case WM_ERASEBKGND:
-    {
-        HDC dc = (HDC)wp, mem = CreateCompatibleDC(dc);
-        HGDIOBJ old = SelectObject(mem, g_background);
-        BitBlt(dc, 0, 0, W, H, mem, 0, 0, SRCCOPY);
-        SelectObject(mem, old);
-        DeleteDC(mem);
+        PaintArtBackground(hwnd, (HDC)wp);
         return 1;
-    }
+    case WM_DRAWITEM:
+        DrawArtButton(hwnd, (const DRAWITEMSTRUCT*)lp);
+        return TRUE;
+    case WM_CTLCOLOREDIT:
     case WM_CTLCOLORSTATIC:
     {
-        if ((HWND)lp == g_isoEdit || (HWND)lp == g_dirEdit)
-            break;
+        // Edits (enabled ones send CTLCOLOREDIT, disabled ones CTLCOLORSTATIC) sit on the drawn
+        // fields; everything else is on the strip.
         HDC dc = (HDC)wp;
-        SetTextColor(dc, RGB(150, 255, 120)); // NVG green on the dark background
-        SetBkMode(dc, TRANSPARENT);
-        return (LRESULT)GetStockObject(NULL_BRUSH);
+        const int id = GetDlgCtrlID((HWND)lp);
+        const bool field = id == ID_ISO_EDIT || id == ID_DIR_EDIT;
+        SetTextColor(dc, id == ID_CREDIT || (field && !IsWindowEnabled((HWND)lp)) ? kDimColor : kTextColor);
+        SetBkColor(dc, field ? kFieldColor : kStripColor);
+        return (LRESULT)(field ? g_fieldBrush : g_stripBrush);
     }
+    case WM_LBUTTONDOWN: // no title bar: drag the window by the art
+        ReleaseCapture();
+        SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+        return 0;
     case WM_COMMAND:
         switch (LOWORD(wp))
         {
-        case ID_ISO_BROWSE: BrowseIso(); break;
-        case ID_DIR_BROWSE: BrowseDir(); break;
-        case IDCANCEL: DestroyWindow(hwnd); break;
-        case ID_INSTALL:
+        case ID_ISO_BROWSE:
         {
-            std::wstring iso = GetText(g_isoEdit), dir = GetText(g_dirEdit);
-            if (iso.empty() || dir.empty())
-            {
-                SetWindowTextW(g_status, L"Pick a disc image and an install folder first.");
-                break;
-            }
-            EnableWindow(g_install, FALSE);
-            bool sc = SendMessageW(g_shortcut, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            std::thread(Install, iso, dir, sc).detach();
+            std::wstring p = Pick(false);
+            if (!p.empty()) SetDlgItemTextW(hwnd, ID_ISO_EDIT, p.c_str());
             break;
         }
+        case ID_DIR_BROWSE:
+        {
+            std::wstring p = Pick(true);
+            if (!p.empty()) SetDlgItemTextW(hwnd, ID_DIR_EDIT, (p + L"\\" + kFolderName).c_str());
+            break;
+        }
+        case ID_INSTALL:
+        {
+            std::wstring iso = GetText(ID_ISO_EDIT), dir = GetText(ID_DIR_EDIT);
+            while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
+            if (iso.empty() || GetFileAttributesW(iso.c_str()) == INVALID_FILE_ATTRIBUTES)
+            {
+                MessageBoxW(hwnd, L"Choose your Splinter Cell: Double Agent disc image first.", kAppName, MB_ICONINFORMATION);
+                break;
+            }
+            if (dir.size() < 3 || dir[1] != L':')
+            {
+                MessageBoxW(hwnd, L"Choose a full path to install to, for example C:\\Games\\SCDA-Recomp.", kAppName, MB_ICONINFORMATION);
+                break;
+            }
+            SetControlsEnabled(false);
+            g_running = true;
+            g_cancel = false;
+            g_error.clear();
+            g_worker = std::thread(Install, iso, dir, IsDlgButtonChecked(hwnd, ID_SC_DESKTOP) == BST_CHECKED,
+                                   IsDlgButtonChecked(hwnd, ID_SC_STARTMENU) == BST_CHECKED);
+            break;
+        }
+        case IDCANCEL:
+            if (g_running)
+            {
+                if (MessageBoxW(hwnd, L"Stop the installation?", kAppName, MB_YESNO | MB_ICONQUESTION) == IDYES)
+                    g_cancel = true;
+                break;
+            }
+            DestroyWindow(hwnd);
+            break;
         }
         return 0;
     case WM_APP_STATUS:
     {
         auto* s = (std::wstring*)lp;
-        SetWindowTextW(g_status, s->c_str());
+        SetDlgItemTextW(hwnd, ID_STATUS, s->c_str());
         delete s;
-        // Static text is transparent: repaint the strip behind it.
-        RECT r; GetWindowRect(g_status, &r); MapWindowPoints(nullptr, hwnd, (POINT*)&r, 2);
-        InvalidateRect(hwnd, &r, TRUE);
         return 0;
     }
     case WM_APP_PROGRESS:
-        SendMessageW(g_progress, PBM_SETPOS, wp, 0);
+        SendDlgItemMessageW(hwnd, ID_PROGRESS, PBM_SETPOS, wp, 0);
         return 0;
     case WM_APP_DONE:
-        EnableWindow(g_install, TRUE);
-        if (wp) SetWindowTextW(g_install, L"Close");
-        if (wp) SetWindowLongPtrW(g_install, GWLP_ID, IDCANCEL);
+        g_running = false;
+        if (g_worker.joinable()) g_worker.join();
+        if (wp)
+        {
+            std::wstring msg = std::wstring(kAppName) + L" is installed.\n\nPlay now?";
+            if (MessageBoxW(hwnd, msg.c_str(), kAppName, MB_YESNO | MB_ICONINFORMATION) == IDYES)
+            {
+                std::wstring dir = GetText(ID_DIR_EDIT);
+                while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
+                std::wstring game = L"\"" + dir + L"\\scda.exe\"";
+                ShellExecuteW(nullptr, L"open", L"explorer.exe", game.c_str(), dir.c_str(), SW_SHOWNORMAL);
+            }
+            DestroyWindow(hwnd);
+        }
+        else
+        {
+            SetDlgItemTextW(hwnd, ID_STATUS, L"");
+            SendDlgItemMessageW(hwnd, ID_PROGRESS, PBM_SETPOS, 0, 0);
+            MessageBoxW(hwnd, g_error.empty() ? L"The installation did not finish." : g_error.c_str(), kAppName, MB_ICONERROR);
+            SetControlsEnabled(true);
+        }
+        return 0;
+    case WM_CLOSE:
+        SendMessageW(hwnd, WM_COMMAND, IDCANCEL, 0);
         return 0;
     case WM_DESTROY:
+        FreeArt();
         PostQuitMessage(0);
         return 0;
     }
@@ -473,13 +820,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
         g_headless = true;
         if (AttachConsole(ATTACH_PARENT_PROCESS))
             freopen("CONOUT$", "w", stdout);
-        Install(iso, dir, shortcut);
+        Install(iso, dir, shortcut, shortcut);
         return g_ok ? 0 : 1;
     }
 
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&icc);
-    g_background = (HBITMAP)LoadImageW(inst, MAKEINTRESOURCEW(IDB_BACKGROUND), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
 
     WNDCLASSEXW wc{ sizeof(wc) };
     wc.lpfnWndProc = WndProc;
@@ -490,11 +836,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
     wc.lpszClassName = L"SCDARecompSetup";
     RegisterClassExW(&wc);
 
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    RECT r{ 0, 0, W, H };
-    AdjustWindowRect(&r, style, FALSE);
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Splinter Cell: Double Agent Recomp - Setup", style,
-        CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, nullptr);
+    // Borderless, painted with the art; the caption is kept for the taskbar only.
+    HWND hwnd = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"Install Splinter Cell: Double Agent (Recomp)",
+        WS_POPUP | WS_CLIPCHILDREN | WS_SYSMENU | WS_MINIMIZEBOX, 0, 0, 100, 100, nullptr, nullptr, inst, nullptr);
     ShowWindow(hwnd, show);
 
     MSG m;
@@ -505,6 +849,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
             TranslateMessage(&m);
             DispatchMessageW(&m);
         }
+    }
+    if (g_worker.joinable())
+    {
+        g_cancel = true;
+        g_worker.join();
     }
     return 0;
 }
