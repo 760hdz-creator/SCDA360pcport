@@ -1433,8 +1433,13 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         if (!((texSlots | texSlots >> 16) >> slot & 1)) // sampler = fetch slot & 15
             continue;
         HostSampler hs = DecodeSampler(regs, slot);
-        // Anisotropy: the guest's, raised to the settings minimum for fully linear filtering.
-        const uint32_t aniso = std::max(hs.anisotropy, hs.filter == 0x15 ? r.anisotropy : 1u);
+        // Anisotropy: the guest's, raised to the settings minimum when min and mag are linear (with
+        // linear or point mips: floor and wall materials often use point mips and blurred at grazing
+        // angles without it). Screen-aligned passes have an isotropic footprint, so AF leaves them.
+        // SCDA_AF_TRILINEAR_ONLY=1: only fully linear filtering (old behaviour, A/B).
+        static const bool afTrilinearOnly = getenv("SCDA_AF_TRILINEAR_ONLY") != nullptr;
+        const bool afEligible = afTrilinearOnly ? hs.filter == 0x15 : (hs.filter & 0x14) == 0x14;
+        const uint32_t aniso = std::max(hs.anisotropy, afEligible ? r.anisotropy : 1u);
         auto& state = r.samplers[(uint64_t(hs.filter) << 24) | (hs.addressU << 16) | (hs.addressV << 8) | hs.addressW |
             (uint64_t(hs.minLod) << 32) | (uint64_t(hs.maxLod) << 36) | (uint64_t(aniso) << 40) | (uint64_t(hs.border == 1) << 48)];
         if (!state)
