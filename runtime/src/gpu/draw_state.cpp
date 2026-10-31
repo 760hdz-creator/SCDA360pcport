@@ -407,6 +407,31 @@ static void DecodeBlock(uint32_t format, const uint32_t* d, uint32_t out[16][4])
     }
 }
 
+uint64_t BlockLinearHash(const TextureFetch& t, const uint8_t* guest)
+{
+    const uint32_t bytes = TextureElementBytes(t.format), log2 = Log2(bytes);
+    if (!IsBlockCompressed(t.format))
+        return 0;
+    uint32_t pitch, height;
+    ElementGrid(t, pitch, height);
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (uint32_t by = 0; by < (t.height + 3) / 4; by++)
+        for (uint32_t bx = 0; bx < (t.width + 3) / 4; bx++)
+        {
+            const uint32_t ex = bx + t.offsetX, ey = by + t.offsetY;
+            const uint32_t index = t.tiled ? TiledTexelIndex(ex, ey, pitch, log2) : ey * pitch + ex;
+            uint32_t d[4];
+            memcpy(d, guest + size_t(index) * bytes, bytes);
+            for (uint32_t i = 0; i < bytes / 4; i++)
+            {
+                d[i] = SwapDword(d[i], t.endian);
+                for (uint32_t k = 0; k < 4; k++)
+                    h = (h ^ ((d[i] >> (k * 8)) & 0xFF)) * 0x100000001B3ull;
+            }
+        }
+    return h;
+}
+
 std::vector<uint32_t> ConvertTexture(const TextureFetch& t, const uint8_t* guest)
 {
     std::vector<uint32_t> out(size_t(t.width) * t.height);

@@ -100,13 +100,17 @@ XINPUT_GAMEPAD PadFromSdl(const bool* buttons, const int16_t* axes)
 }
 #endif
 
-bool PadGetState(XINPUT_GAMEPAD& g)
+bool PadGetState(XINPUT_GAMEPAD& g, PadKind* kind)
 {
     g = XINPUT_GAMEPAD{};
+    if (kind)
+        *kind = PadKind::None;
     XINPUT_STATE x{};
     if (XInputGetState(0, &x) == ERROR_SUCCESS)
     {
         g = x.Gamepad;
+        if (kind)
+            *kind = PadKind::Xbox;
         return true;
     }
 #ifdef SCDA_HAVE_SDL3
@@ -120,6 +124,11 @@ bool PadGetState(XINPUT_GAMEPAD& g)
         for (int i = 0; i < SDL_GAMEPAD_AXIS_COUNT; i++)
             axes[i] = SDL_GetGamepadAxis(pad, SDL_GamepadAxis(i));
         g = PadFromSdl(buttons, axes);
+        if (kind)
+        {
+            const SDL_GamepadType type = SDL_GetGamepadType(pad);
+            *kind = type == SDL_GAMEPAD_TYPE_PS4 ? PadKind::PS4 : type == SDL_GAMEPAD_TYPE_PS5 ? PadKind::PS5 : PadKind::Xbox;
+        }
         return true;
     }
 #endif

@@ -6,8 +6,10 @@
 #include <xinput.h>
 #include <cstdint>
 
+// Which pad answered: its button prompts (prompts.h).
+enum class PadKind { None, Xbox, PS4, PS5 };
 // Current state of the pad; false (and an idle g) when none is connected. Thread-safe.
-bool PadGetState(XINPUT_GAMEPAD& g);
+bool PadGetState(XINPUT_GAMEPAD& g, PadKind* kind = nullptr);
 // Motor speeds (0..65535) held until changed, as XInputSetState. Thread-safe.
 void PadSetVibration(uint16_t low, uint16_t high);
 

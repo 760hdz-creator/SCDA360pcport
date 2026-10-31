@@ -97,6 +97,9 @@ uint32_t TextureGuestBytes(const TextureFetch& t);
 uint32_t TextureCubeFaceBytes(const TextureFetch& t); // stride between the 6 faces of a cube texture
 // Texel index of (x, y) in a tiled surface of the given pitch (texels).
 uint32_t TiledTexelIndex(uint32_t x, uint32_t y, uint32_t pitch, uint32_t log2Bpp);
+// FNV-1a 64 over level 0 of a DXT texture: its 4x4 blocks in row order, endian-swapped to the
+// little-endian layout of a DDS file (tiling and address do not matter). 0 for other formats.
+uint64_t BlockLinearHash(const TextureFetch& t, const uint8_t* guest);
 // Guest texture bytes (big-endian, as in memory) -> width*height RGBA8 with endian + swizzle applied.
 std::vector<uint32_t> ConvertTexture(const TextureFetch& t, const uint8_t* guest);
 // 16-bit (16, 16_16, 16_16_16_16 unorm; 16_FLOAT x1/2/4) and 32-bit float (x1/2/4) formats:

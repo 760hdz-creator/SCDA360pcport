@@ -11,6 +11,7 @@
 #include <wrl/client.h>
 #include <gpu/d3d11_renderer.h>
 #include <gpu/draw_state.h>
+#include <prompts.h>
 #include <gpu/gamma_ramp.h>
 #include <gpu/shader_compiler.h>
 #include <gpu/xenos/translate.h>
@@ -423,6 +424,9 @@ struct DrawResources
         uint64_t hash = 0, lastUsed = 0;
         uint64_t probe = 0, fullAt = 0; // ProbeBytes of level 0 and present number at the last full hash
         uint32_t stable = 0; // consecutive full hashes equal to hash
+        // Controller-prompt icon (prompts.h) index, -1 none; found for the guest bytes hashing iconFor.
+        int icon = -1;
+        uint64_t iconFor = 0;
         // Guest bytes of level 0, 1, ...: fixed by the fetch constant (the key), so computed once.
         std::vector<uint32_t> levelBytes;
     };
@@ -1311,7 +1315,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
             static const bool compare = getenv("SCDA_TEXHASH_COMPARE") != nullptr;
             const bool readable = GuestRangeReadable(guest, guestBytes);
             const uint64_t probe = readable ? ProbeBytes(guest, guestBytes) : 0;
-            const bool probeOnly = cached.srv && !noCache && probe && probe == cached.probe && cached.stable >= kTexStableFrames &&
+            const bool probeOnly = cached.srv && !noCache && probe && probe == cached.probe && cached.stable >= kTexStableFrames && cached.icon < 0 &&
                 m_presented < cached.fullAt + kTexFullEvery && (m_presented + (key * 0x9E3779B97F4A7C15ull >> 32)) % kTexFullEvery != 0;
             uint64_t hash = cached.hash;
             bool guestMips = false;
@@ -1343,6 +1347,18 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
                 }
             }
             cached.lastUsed = m_presented;
+            // Prompt icons: known by their DXT blocks (any address/tiling), redrawn for the device in
+            // use; the style is folded into the hash so a device switch converts them again.
+            if (hash && t.format == 20 && t.width == t.height && (t.width == 64 || t.width == 32) && cached.iconFor != hash)
+            {
+                cached.icon = PromptIconIndex(BlockLinearHash(t, guest), t.width, t.height);
+                cached.iconFor = hash;
+                if (cached.icon >= 0 && getenv("SCDA_TRACE_PROMPTS"))
+                    RuntimeLog("[prompts] %s at %08X\n", PromptIconName(cached.icon), t.physical);
+            }
+            const PromptStyle promptStyle = cached.icon >= 0 && hash == cached.iconFor ? CurrentPromptStyle() : PromptStyle::Xbox;
+            if (promptStyle != PromptStyle::Xbox)
+                hash ^= (uint64_t(promptStyle) + 1) * 0x9E3779B97F4A7C15ull;
             if (hash && cached.srv && cached.hash == hash && !noCache)
                 srv = cached.srv;
             else if (hash)
@@ -1350,6 +1366,8 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
                 const bool isFloat = IsFloatTextureFormat(t.format);
                 std::vector<float> floats = isFloat ? ConvertTextureFloat(t, guest) : std::vector<float>();
                 std::vector<uint32_t> texels = isFloat ? std::vector<uint32_t>() : ConvertTexture(t, guest);
+                if (promptStyle != PromptStyle::Xbox && PromptRedraw(cached.icon, promptStyle, texels, t.width, t.height))
+                    guestMips = false; // mips generated from the new icon
                 if (isFloat && getenv("SCDA_DUMP_TEXTURES")) // RGBA8 copy for the dump only
                     for (size_t i = 0; i < floats.size(); i += 4)
                         texels.push_back(ToUnorm8(floats[i]) | (ToUnorm8(floats[i + 1]) << 8) | (ToUnorm8(floats[i + 2]) << 16) | (ToUnorm8(floats[i + 3]) << 24));
@@ -1370,6 +1388,12 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
                     uint32_t bytes = TextureGuestBytes(t), nonFF = 0;
                     for (uint32_t i = 0; i < bytes; i++)
                         nonFF += guest[i] != 0xFF;
+                    if (bytes <= 0x10000) // small textures also as raw guest bytes (level 0), for finding them in packages
+                        if (FILE* f = fopen((dumpDir + std::string(name).replace(strlen(name) - 4, 4, ".raw")).c_str(), "wb"))
+                        {
+                            fwrite(guest, 1, bytes, f);
+                            fclose(f);
+                        }
                     RuntimeLog("[tex] %s fetch %08X %08X %08X %08X: %u of %u guest bytes not FF, first %02X%02X%02X%02X\n", name + 1,
                         regs[kRegFetchConstants + slot * 6], regs[kRegFetchConstants + slot * 6 + 1], regs[kRegFetchConstants + slot * 6 + 2],
                         regs[kRegFetchConstants + slot * 6 + 3], nonFF, bytes, guest[0], guest[1], guest[2], guest[3]);
