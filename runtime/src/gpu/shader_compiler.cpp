@@ -10,7 +10,7 @@
 #include <gpu/xenos/translate.h>
 
 // Bump when the translator or shader_common changes: old disk entries are then ignored.
-static constexpr uint32_t kTranslatorVersion = 18;
+static constexpr uint32_t kTranslatorVersion = 19; // v19: ALU vector result deferred past the co-issued scalar op
 static constexpr uint32_t kCacheMagic = 0x53444353; // "SCDS"
 
 struct CacheHeader
@@ -114,6 +114,24 @@ const CompiledShader& GetCompiledShader(const ShaderBlob& blob, const std::files
         return *it->second;
     auto shader = std::make_unique<CompiledShader>();
     std::filesystem::path path = CachePath(blob, cacheDir);
+    // SCDA_HLSL_OVERRIDE=<dir>: a hand-edited <dir>/<hash>.<vs|ps>.hlsl replaces the translation
+    // (instrumenting a shader); never cached.
+    if (const char* dir = getenv("SCDA_HLSL_OVERRIDE"))
+    {
+        char name[64];
+        snprintf(name, sizeof(name), "%016llx.%s.hlsl", (unsigned long long)blob.hash, blob.type == ShaderType::Pixel ? "ps" : "vs");
+        if (std::ifstream f{ std::filesystem::path(dir) / name, std::ios::binary })
+        {
+            const std::string hlsl((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            std::string err;
+            shader->bytecode = CompileHlsl(hlsl, blob.type == ShaderType::Pixel, &err);
+            shader->ok = !shader->bytecode.empty();
+            printf("[shader] %s override: %s %s\n", name, shader->ok ? "ok" : "FAILED", err.c_str());
+            if (shader->ok)
+                g_readyCount++;
+            return *g_compiled.emplace(blob.hash, std::move(shader)).first->second;
+        }
+    }
     if (LoadCached(blob, path, shader->bytecode))
         shader->ok = true;
     else

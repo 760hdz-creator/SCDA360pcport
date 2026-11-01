@@ -766,6 +766,15 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
     if (instr.exportData)
         vectorWriteMask &= ~instr.scalarWriteMask;
 
+    // The vector and scalar ops of one ALU instruction run in parallel: both read their sources
+    // before either writes. Writing the vector result first let the scalar op read the new value
+    // (e.g. `r2.xyz = ...; ps = -r2.z > 0.0`). With a scalar op present, the vector result goes to
+    // vt and is copied to its register after the scalar op. SCDA_ALU_SERIAL=1: old order (A/B).
+    static const bool aluSerial = getenv("SCDA_ALU_SERIAL") != nullptr;
+    const bool deferVector = !aluSerial && vectorWriteMask != 0 && exportRegister.empty() &&
+        instr.scalarOpcode != AluScalarOpcode::RetainPrev;
+    std::string deferredMask;
+
     if (vectorWriteMask != 0)
     {
         indent();
@@ -774,9 +783,18 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             out += exportRegister;
             out += '.';
         }
+        else if (deferVector)
+        {
+            out += "vt.";
+        }
         else
         {
             print("r{}.", instr.vectorDest);
+        }
+        for (size_t i = 0; deferVector && i < 4; i++)
+        {
+            if ((vectorWriteMask >> i) & 0x1)
+                deferredMask += SWIZZLES[i];
         }
 
         for (size_t i = 0; i < 4; i++)
@@ -1143,6 +1161,12 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             println("a0 = (int)clamp(floor({}), -256.0, 255.0);", op(SCALAR_0));
             break;
         }
+    }
+
+    if (!deferredMask.empty())
+    {
+        indent();
+        println("r{0}.{1} = vt.{1};", instr.vectorDest, deferredMask);
     }
 
     uint32_t scalarWriteMask = instr.scalarWriteMask;
@@ -1599,6 +1623,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
     out += "\tint lc = 0;\n";
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
+    out += "\tfloat4 vt = 0.0; // vector result held until the co-issued scalar op has read its source\n";
     out += "\tfloat texLod = 0.0;\n";
     if (isPixelShader)
     {

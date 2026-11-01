@@ -70,6 +70,7 @@ void ShaderRecompiler::recompileRaw(const be<uint32_t>* code, uint32_t shaderSiz
     out += "\tint lc = 0;\n";
     out += "\tbool p0 = false;\n";
     out += "\tfloat ps = 0.0;\n";
+    out += "\tfloat4 vt = 0.0; // vector result held until the co-issued scalar op has read its source\n";
     out += "\tfloat texLod = 0.0;\n";
     if (pixel)
         out += "\tCubeMapData cubeMapData = (CubeMapData)0;\n";

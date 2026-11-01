@@ -761,6 +761,15 @@ static ID3D11ShaderResourceView* CubeView(ID3D11Device* device, ID3D11DeviceCont
         {
             std::vector<uint32_t> texels = ConvertTexture(f, g);
             context->UpdateSubresource(tex.Get(), sub, nullptr, texels.data(), t.width * 4, 0);
+            // SCDA_DUMP_TEXTURES also writes each cube face once: <physical>_<format>_<w>x<h>_face<n>.bmp.
+            static const char* dumpDir = getenv("SCDA_DUMP_TEXTURES");
+            static std::unordered_set<uint64_t> dumpedFaces;
+            if (dumpDir && dumpedFaces.insert(uint64_t(t.physical) << 3 | face).second && dumpedFaces.size() < 600)
+            {
+                char name[96];
+                snprintf(name, sizeof(name), "\\%08X_%u_%ux%u_face%u.bmp", t.physical, t.format, t.width, t.height, face);
+                WriteBmp(dumpDir + std::string(name), texels, t.width, t.height);
+            }
         }
     }
     context->GenerateMips(srv.Get());
@@ -1671,7 +1680,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             RuntimeLog("[rtrace]   bools %08X %08X %08X %08X %08X %08X %08X %08X\n", r.regs[kRegBoolConstants], r.regs[kRegBoolConstants + 1],
                 r.regs[kRegBoolConstants + 2], r.regs[kRegBoolConstants + 3], r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
                 r.regs[kRegBoolConstants + 6], r.regs[kRegBoolConstants + 7]);
-            for (uint32_t c = 0; c < 256; c = c == 31 ? 240 : c == 243 ? 255 : c + 1) // c0-c31, c240-c243, c255
+            for (uint32_t c = 0; c < 256; c = c == 31 ? 224 : c == 243 ? 255 : c + 1) // c0-c31, c224-c243, c255
             {
                 auto f = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + i]); };
                 RuntimeLog("[rtrace]   vs c%u %g %g %g %g\n", c, f(0), f(1), f(2), f(3));
@@ -1887,6 +1896,56 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             ID3D11ShaderResourceView* srv = avg.Get();
             m_context->PSSetShaderResources(kHlslTex2DSlot + averageSlot, 1, &srv);
             r.stateDirty = true; // the next draw rebinds the guest textures
+        }
+    }
+    // SCDA_TEX_FLAT=<ps hash hex>:<slot>:<RRGGBBAA hex>[,..]: draws with that PS sample a 1x1 texture of
+    // that colour in that slot (A/B which input of a material is wrong).
+    {
+        struct Flat { uint64_t ps; uint32_t slot, rgba; ComPtr<ID3D11ShaderResourceView> srv; };
+        static std::vector<Flat> flats = []
+        {
+            std::vector<Flat> v;
+            for (const char* p = getenv("SCDA_TEX_FLAT"); p && *p; p += strcspn(p, ",") + (p[strcspn(p, ",")] ? 1 : 0))
+            {
+                char* e = nullptr;
+                Flat f{ strtoull(p, &e, 16), 0, 0, nullptr };
+                if (*e == ':')
+                    f.slot = uint32_t(strtoul(e + 1, &e, 10));
+                if (*e == ':')
+                    f.rgba = _byteswap_ulong(uint32_t(strtoul(e + 1, &e, 16))); // RRGGBBAA -> R8G8B8A8 memory order
+                if (f.slot < 32 || (f.slot >= 64 && f.slot < 96)) // 64+n: cube slot n
+                    v.push_back(f);
+            }
+            return v;
+        }();
+        for (Flat& f : flats)
+        {
+            if (f.ps != d.ps->hash)
+                continue;
+            if (!f.srv)
+            {
+                D3D11_TEXTURE2D_DESC td{};
+                const bool cube = f.slot >= 64;
+                td.Width = td.Height = td.MipLevels = 1;
+                td.ArraySize = cube ? 6 : 1;
+                td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                td.SampleDesc.Count = 1;
+                td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                td.MiscFlags = cube ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0;
+                D3D11_SUBRESOURCE_DATA init[6];
+                for (auto& i : init)
+                    i = { &f.rgba, 4, 4 };
+                D3D11_SHADER_RESOURCE_VIEW_DESC sd{};
+                sd.Format = td.Format;
+                sd.ViewDimension = cube ? D3D11_SRV_DIMENSION_TEXTURECUBE : D3D11_SRV_DIMENSION_TEXTURE2D;
+                sd.Texture2D.MipLevels = 1; // TextureCube.MipLevels shares the offset
+                ComPtr<ID3D11Texture2D> tex;
+                if (SUCCEEDED(m_device->CreateTexture2D(&td, init, &tex)))
+                    m_device->CreateShaderResourceView(tex.Get(), &sd, &f.srv);
+            }
+            ID3D11ShaderResourceView* srv = f.srv.Get();
+            m_context->PSSetShaderResources(kHlslTex2DSlot + f.slot, 1, &srv);
+            r.stateDirty = true;
         }
     }
     UploadVertexMemory(d, frame);
