@@ -1860,7 +1860,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         idx += " " + std::to_string(v);
                     }
                 }
-                RuntimeLog("[rtrace]   prim %u source %u index32 %d endian %u indices:%s\n", d.primType, unsigned(d.source), int(d.index32), d.indexEndian, idx.c_str());
+                RuntimeLog("[rtrace]   prim %u source %u index32 %d endian %u offset %u indices:%s\n", d.primType, unsigned(d.source), int(d.index32), d.indexEndian, r.regs[0x2102] & 0xFFFFFF, idx.c_str());
                 // The draw's vertex snapshots (what the GPU reads): key and first 4 float3s at stride 28.
                 for (uint32_t mi : d.memory)
                 {
@@ -2165,6 +2165,11 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     m_context->GSSetShader(rectList ? r.rectListGs.Get() : pointList ? r.pointListGs.Get() : nullptr, nullptr, 0);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(topology));
     const bool expand = NeedsTriangleListExpansion(d.primType);
+    // VGT_INDX_OFFSET (0x2102) applies to auto-generated indices too: JBA HQ draws its BSP polygons as
+    // auto-indexed fans (offsets 6000-8000 into one shared buffer); without it every fan used the
+    // buffer's first vertices (big dark wedges over walls). SCDA_NO_INDEX_OFFSET=1: old behaviour.
+    static const bool noIndexOffset = getenv("SCDA_NO_INDEX_OFFSET") != nullptr;
+    const uint32_t autoOffset = !noIndexOffset && d.source != IndexSource::Dma ? r.regs[0x2102] & 0xFFFFFF : 0;
     if (d.source == IndexSource::Dma || expand)
     {
         std::vector<uint8_t>& indices = r.indexScratch;
@@ -2236,7 +2241,6 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         // indexes the last 8 vertices of the ocean grid's buffer with offset 4604; without it the
         // horizon drew 8 grid vertices instead (black band). Reset indices stay strip cuts.
         // SCDA_NO_INDEX_OFFSET=1: old behaviour (A/B).
-        static const bool noIndexOffset = getenv("SCDA_NO_INDEX_OFFSET") != nullptr;
         if (const uint32_t indexOffset = r.regs[0x2102] & 0xFFFFFF; indexOffset && !indices.empty() && !noIndexOffset)
         {
             const bool resetOn = (r.regs[0x2205] >> 21) & 1;
@@ -2261,7 +2265,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             std::vector<uint32_t> list(count);
             for (uint32_t i = 0; i < count; i++)
                 if (indices.empty())
-                    list[i] = i;
+                    list[i] = i + autoOffset;
                 else if (wide)
                     memcpy(&list[i], &indices[i * 4], 4);
                 else
@@ -2326,7 +2330,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         m_context->DrawIndexed(count, 0, 0);
     }
     else
-        m_context->Draw(d.indexCount, 0);
+        m_context->Draw(d.indexCount, autoOffset);
     m_lastDrawn++;
     // SCDA_PIXEL_WATCH=<frame>,<x>,<y>: in that presented frame, after every draw, read RT0 at guest
     // window pixel (x, y) (window offset and MSAA/scale applied) and log the draw when it changed.
