@@ -209,7 +209,11 @@ Evidence paths under `_run/` are local only (git-ignored).
   plane 0 (`PA_CL_CLIP_CNTL` bit 0, plane at `PA_CL_UCP_0` 0x2388). We ignored user clip planes, so Sam and the
   underwater geometry were drawn into it. The VS wrapper now writes `SV_ClipDistance0/1` = dot(exported position,
   plane) for enabled planes (none with clip_disable), as Xenia does. Translator v22. `SCDA_NO_UCP=1` = old.
-- **Evidence:** `_run/fog/` (`res_ab.png` the texture, `up_zoom.png` the view, `ref_zoom.png` ref 172.5/175.5 s).
+- **Evidence:** `_run/fog/` (`res_ab.png` the texture, `up_zoom.png` the view, `ref_zoom.png` ref 172.5/175.5 s;
+  `okh_ab.png` Okhotsk_02 texture 0A41D000: diving Sam gone, guard and barrels on the ice kept).
+- **Checked:** Hotel bathroom mirror and Cozumel_01 use no clip planes (unchanged). newyork_02 frames 1200-2000:
+  27.8-28.6 fps (older exe 25.7-26.2), no cost. The old census 2550 view (grey surface, straight cut) was not
+  reproduced in either build, so that exact symptom is unconfirmed.
 
 ## P3. Fog and light shafts: no confirmed difference left
 
@@ -220,6 +224,7 @@ Evidence paths under `_run/` are local only (git-ignored).
   10): not separated from capture tint (no HUD calibration done).
 - **Blend clamp theory struck for this scene:** no blend in it reads destination alpha, so FP16 alpha > 1 never
   reaches colour. Left: 7e3 precision (7-bit mantissa) vs FP16 for faint layers; would need programmable blending.
+- **Not re-checked:** Osprey bay fog (census frame 2000 vs ref ~161-163 s).
 - **Status:** open only if a side-by-side at an aligned moment shows a difference.
 
 ## P3. Scale 2+ edge row/column and faint line at a tile split

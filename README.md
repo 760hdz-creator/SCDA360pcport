@@ -48,8 +48,8 @@ How, in plain terms:
 - **Hotel mirrors are back.** The bathroom mirrors reflect Sam and the room again instead of showing a dark wall.
 - **Hotel wardrobe stays the same.** Its red lattice doors no longer turn plain white until you walk up close.
 - **No more flickering moon in New York.** The moon and clouds no longer pop out for a frame at a time.
-- **Clear sky through the ice.** Diving under the ice in Iceland, the sky in the hole was smeared with dark shapes
-  from underwater. The water's view of the world above now leaves out everything below the surface, like the console.
+- **Clear sky through the ice.** Diving under the ice in Iceland and the Sea of Okhotsk, the view up through the
+  water was smeared with Sam and other things from underwater. The water's view of the world above now leaves out everything below the surface, like the console.
 - **Cozumel's sea reaches the horizon.** The black, jagged strip between the sea and the sky is gone.
 - **Light distance setting** (F1 > Display). Lights switch off past a certain distance, so far parts of levels can
   look dark, for example the Iceland geothermal plant. The default x4 shows far more lights than the console, like
@@ -123,7 +123,8 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 **Known issues**
 
 - Most maps hold the game's 30 fps limit. New York's busiest areas can drop to about 25 fps.
-- Fog and light shafts may still look slightly different from the console in places.
+- Fog, light shafts and the water surface seen from below may still look slightly different from the console in
+  places.
 - No ultrawide support yet.
 - Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
   show up about a third of the way down the screen.
