@@ -4,7 +4,7 @@
 
 # SCDA V1 Recomp
 
-**A native Windows port of *Splinter Cell: Double Agent* (Xbox 360), built by static recompilation.**
+**Splinter Cell: Double Agent (Xbox 360) running natively on Windows. No emulator.**
 
 ![status](https://img.shields.io/badge/status-game%20complete%2C%20polishing-brightgreen)
 ![platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
@@ -14,154 +14,151 @@
 </div>
 
 > [!NOTE]
-> **The game is finished.** Every map loads, plays and saves at the game's 30 fps cap, missions chain into each
-> other, and the big rendering bugs are fixed. All that is left is the prebuilt installer and a playthrough of the
-> whole story to polish what turns up. Until the installer is out, build from source.
+> **You can play the whole game.** Every mission loads, plays and saves, and missions lead into each other like on
+> the console. What's left is polish: playing the story start to finish to catch the last visual bugs, and putting
+> out a ready-made installer. Until then you have to build it yourself.
 
 ---
 
 ## What is this?
 
-SCDA Recomp converts the Xbox 360 executable (`SC4_Offline.xex`, Ubisoft Shanghai's single-player build) into native
-x86-64 C++. The PowerPC code is **statically recompiled**: no emulator interprets it at run time. A small host runtime
-stands in for the console:
+The Xbox 360 version of *Splinter Cell: Double Agent* is the better of the two versions, but it only runs on a 360 or
+in an emulator. This project turns the game's Xbox 360 program into a real Windows program.
 
-- **Kernel and XAM:** 150+ `xboxkrnl` / `xam` calls run on Win32 (threads, files, saves, profiles, title relaunch).
-- **Xenos GPU:** the PM4 command processor feeds a Direct3D 11 renderer. Shader microcode is translated to HLSL at run time.
-- **Audio:** XMA is decoded through FFmpeg's WMA Pro decoder and output through XAudio2.
+How, in plain terms:
 
-## Recent progress
+- **The game code is translated ahead of time.** A tool reads the console's PowerPC code and rewrites all of it as
+  C++, which is then compiled for your PC. Nothing is emulated while you play.
+- **A small "fake console" fills in the rest.** The game still expects an Xbox 360 around it (its operating system,
+  graphics chip and sound chip). This project provides those pieces on Windows:
+  - **System calls** (files, threads, saves, your profile) go to Windows.
+  - **Graphics** go to Direct3D 11. The game's own shaders are converted to PC shaders on the fly.
+  - **Sound** (the Xbox 360's XMA format) is decoded with FFmpeg and played through XAudio2.
+
+## What's new
 
 **November 2026**
 
-- **Cozumel ocean reaches the horizon.** A black, stair-stepped band (with a flickering edge) sat between the sea and
-  the sky. The far ocean plane uses an index offset the renderer ignored, so it drew the wrong vertices. Fixed; the sea
-  now runs to a clean horizon like on the Xbox 360.
-- **New Light distance option** (F1 > Display, `[Display] LightDistance=1-8`). Every light switches off beyond a set
-  distance, which leaves far parts of levels dark (for example the Iceland geothermal plant). The default x4 matches
-  the PC widescreen fix; x1 is the console's distance. Costs about 1.5 fps on the heaviest maps.
-- **Reflections and water.** Cube-map textures are now bound, so environment reflections are no longer black, and the
-  water shaders' reflections work.
-- **Shadows and dark bands.** Kinshasa's sun shadows no longer cover the whole ground, and the dark band at the bottom
-  of the screen in New York and the Hotel is gone.
-- **Solid walls.** The Iceland shack and JBA HQ walls are solid again: level polygons now use the right vertices.
-- **Mirrors.** The Hotel bathroom mirrors reflect the room again.
-- **No more black flashes** in the JBA headquarters (occlusion query results now arrive within one frame).
-- **EMF vision** samples its 3D noise texture, like the console.
-- **More fixes:** the bottom band on the sniper scope, point sprites, 1D textures and vertex formats. All 4,532
-  shaders in the game's 20 packages now translate and compile.
-- **Controllers and prompts.** PlayStation and Switch controllers work natively (SDL3, with rumble). Button prompts
-  match the pad or keyboard you use, including the A button on the loading screens.
-- **F1 menu** gains a field of view slider (60-110, 75 is the game's own), and L1/R1 switch tabs.
-- **Installer** has a new window, a Start menu shortcut and an update mode that only replaces the game executable
-  (your saves and settings stay).
+- **JBA headquarters looks right.** Big dark triangles no longer cover the walls and floors, and you can't see
+  through the walls anymore. Some level geometry was being built from the wrong points.
+- **The Iceland shack is solid.** Its roof and walls had holes from the inside. It was the same bug as the JBA HQ
+  walls.
+- **Hotel windows work.** Looking in through the rainy glass on the outside of the hotel, you now see the room and
+  the people inside, not big blurry blocks. A small mistake in how the game's shaders were converted broke this effect.
+- **Hotel mirrors are back.** The bathroom mirrors reflect Sam and the room again instead of showing a dark wall.
+- **Hotel wardrobe stays the same.** Its red lattice doors no longer turn plain white until you walk up close.
+- **No more flickering moon in New York.** The moon and clouds no longer pop out for a frame at a time.
+- **Cozumel's sea reaches the horizon.** The black, jagged strip between the sea and the sky is gone.
+- **Light distance setting** (F1 > Display). Lights switch off past a certain distance, so far parts of levels can
+  look dark, for example the Iceland geothermal plant. The default x4 shows far more lights than the console, like
+  the popular PC widescreen fix. x1 matches the console. It costs about 1.5 fps on the heaviest maps.
+- **Reflections and water.** Shiny surfaces and water reflect again instead of showing black.
+- **Shadows.** Kinshasa's ground is no longer covered in shadow, and the dark strip at the bottom of the screen in
+  New York and the Hotel is gone.
+- **No more black flashes** in the JBA headquarters.
+- **EMF vision** looks like the console's.
+- **Smaller fixes:** the strip at the bottom of the sniper scope, sparks and other particles, and a few texture and
+  model formats. Every one of the game's 4,532 shaders now converts and compiles.
+- **PlayStation and Switch controllers** work directly, with rumble. On-screen button icons match whatever you're
+  holding, keyboard included, even on the loading screens.
+- **Field of view slider** in the F1 menu (60-110, the game uses 75). L1/R1 switch tabs.
+- **Installer** got a new look, a Start menu shortcut and an update mode that only swaps the game program. Your saves
+  and settings are kept.
 
 **Earlier**
 
-- **Display gamma matches the console.** The game uploads its own gamma ramp to the GPU at boot, which deepens the
-  shadows. The port now applies it at present, so night scenes and interiors are as dark as on the Xbox 360.
-- **Real 4x MSAA and no more glow streaks.** Multisampled surfaces are now emulated the way the Xenos GPU lays them
-  out. This removed the yellow and orange glow streaks in Jail and Iceland, and gives the scene real 4x anti-aliasing.
-- **Sea of Okhotsk fixed.** The screen no longer goes black under water or white when looking up at the ice. The
-  bloom shaders' 3D texture fetches now read the right texture.
-- **Sun shadows fixed.** Samplers now honour the game's border colour, so areas outside the sun's shadow map count
-  as lit. The long dark wedges and smeared wall and floor textures in Kinshasa are gone.
-- **Real occlusion queries.** The game's GPU visibility tests now return real results. Meshes no longer vanish in
-  alternating frames when the GPU is busy.
-- **New York at full speed.** `10_newyork_02` now holds the 30 fps cap too, so every map runs at full speed.
-- **Clean goggles option.** `CleanGoggles=1` shows night, thermal and EMF vision without the scanlines and noise.
-- **Seamless music loops** and real implementations for the last placeholder kernel calls.
-- **Missions end for real.** The game's own mission-ending script now runs end to end. 01_Intro shows MISSION
-  COMPLETE, saves campaign progress to the profile, plays the Iceland-to-Jail cutscene and relaunches straight into
-  Ellsworth Penitentiary, all in one session. Inside a mission, the move to the next part (for example Sea of
-  Okhotsk part 1 to part 2) carries Sam's state across (`TRAVELDATA`).
-- **Higher internal resolution.** `Scale=2..4` in `settings.ini` renders at 2560x1440 to 5120x2880 and box-filters
-  down to the window, which acts as supersampling anti-aliasing. Kinshasa, the heaviest map, holds the game's 30 fps
-  cap at `Scale=2`.
-- **Texture mipmaps and anisotropic filtering.** Textures use the game's own authored mip levels (including the packed
-  mip tail of small textures), so distant surfaces no longer shimmer. `Anisotropy=16` sharpens floors and walls seen at an angle.
-- **Auto-exposure fixed at higher scales.** Scenes no longer turn twice as bright above `Scale=1`.
-- **In-mission flow verified.** Load last checkpoint after ASSIGNMENT FAILED, Restart Mission, Quit to the main menu
-  and loading a save from the pause menu all work, repeatedly, in one session.
-- **Mouse look fixed with a controller plugged in.** A pad's resting stick drift used to block mouse and keyboard
-  input. Stick values inside the XInput deadzone now count as idle. Mouse direction is checked in game.
-- **Shader census clean.** With an empty shader cache, every map translates and compiles its shaders (490 in all) with
-  no failures.
+- **Darkness matches the console.** The game sets up its own brightness curve at startup. That's now applied, so
+  night scenes and dark rooms are as dark as on the Xbox 360.
+- **Real anti-aliasing and no more glow streaks.** The console's 4x anti-aliasing is now done the way the 360 does
+  it, which also removed yellow and orange streaks in Jail and Iceland.
+- **Sea of Okhotsk fixed.** No more black screen underwater or white screen when looking up at the ice.
+- **Sun shadows fixed** in Kinshasa: no more long dark wedges and smeared walls.
+- **Things stop vanishing.** Objects no longer disappear every other frame when the PC is busy.
+- **New York at full speed.** The heavy New York map got a big speed-up (see Known issues).
+- **Clean goggles option.** Night, thermal and EMF vision without scanlines and noise.
+- **Music loops without a gap**, and the last placeholder system calls now do real work.
+- **Missions end properly.** Finishing a mission shows MISSION COMPLETE, saves your progress, plays the cutscene and
+  starts the next mission, all without restarting the program.
+- **Higher resolution.** `Scale=2` to `4` renders at 2560x1440 up to 5120x2880 and shrinks it to your window, which
+  makes edges very smooth.
+- **Sharper, steadier textures.** Distant surfaces no longer shimmer, and floors and walls stay sharp at an angle
+  (anisotropic filtering up to 16x).
+- **Brightness fixed at higher resolutions.** Scenes no longer turn twice as bright above `Scale=1`.
+- **Checkpoints, restart and quit all work**, as many times as you like in one session.
+- **Mouse works with a controller plugged in.** A slightly drifting stick no longer blocks the mouse and keyboard.
 
 ## Screenshots
 
-Shots come from the current build (November 2026), running natively on Windows at `Scale=2` (2560x1440) with 16x
-anisotropic filtering.
+Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440) with 16x anisotropic filtering.
 
 | | |
 |:-:|:-:|
 | ![Cozumel: the sea to the horizon](docs/images/cozumel_horizon.jpg) | ![Iceland: the geothermal plant at night](docs/images/iceland_plant_vista.jpg) |
-| **Cozumel**: the sea now reaches the horizon | **Iceland**: the geothermal plant, distant lights on (Light distance x4) |
+| **Cozumel**: the sea reaches the horizon | **Iceland**: the geothermal plant, distant lights on (Light distance x4) |
 | ![Iceland: EMF vision](docs/images/iceland_emf.jpg) | ![Iceland: Osprey bay](docs/images/iceland_osprey.jpg) |
 | **Iceland**: EMF vision | **Iceland**: Osprey bay before the drop |
 | ![Ellsworth Penitentiary](docs/images/jail_cell.jpg) | ![Sea of Okhotsk: under the ice](docs/images/okhotsk_ice_dive.jpg) |
 | **Ellsworth Penitentiary**: helping Jamie escape | **Sea of Okhotsk**: diving under the ice |
 | ![Kinshasa](docs/images/kinshasa_camp.jpg) | ![Shanghai hotel](docs/images/hotel.jpg) |
-| **Kinshasa**: retrieving the plans, with sun shadows | **Shanghai**: arriving at the hotel |
+| **Kinshasa**: getting the plans, with sun shadows | **Shanghai**: arriving at the hotel |
 | ![JBA headquarters](docs/images/jba_hq.jpg) | |
 | **New York**: JBA headquarters | |
 
-## Status
+## How far along is it?
 
-| Area | State |
+| Part | State |
 |-|-|
-| Boot, menus, profile | ✅ Main menu and profile sign-in |
-| Missions | ✅ All 18 single-player maps load and play, at the game's 30 fps cap |
-| In-mission flow | ✅ Checkpoint reload after failure, restart mission, quit to menu, load from pause |
-| Menu to mission transitions | ✅ In-process title relaunch with launch data (no restart) |
-| Mission to mission | ✅ MISSION COMPLETE, progress saved, cutscene, next mission loads (tested with a debug trigger, not a full playthrough) |
-| Save / load | ✅ Saves to `%LOCALAPPDATA%\SCDARecomp`; position and difficulty restore |
-| Graphics | 🟡 Most scenes match the console. Some glitches remain (see below). Internal resolution up to 4x, mipmaps, anisotropic filtering |
-| Audio | ✅ Music, 3D sound effects, dialogue (XMA) and Bink video audio |
-| Input | ✅ Xbox controller. 🟡 Mouse look and keyboard are new and barely tested |
-| Multiplayer / Xbox Live | ❌ Not planned for now (network calls are stubbed) |
+| Menus and profile | ✅ Works |
+| Missions | ✅ All 18 single-player maps load and play |
+| During a mission | ✅ Checkpoints after failing, restart, quit to menu, load from the pause menu |
+| Menu to mission, mission to mission | ✅ Works without restarting the program (mission to mission tested with a debug shortcut, not a full playthrough yet) |
+| Saving and loading | ✅ Saves go to `%LOCALAPPDATA%\SCDARecomp`. Your position and difficulty come back |
+| Graphics | 🟡 Almost everything matches the console. A few small differences are left (see below) |
+| Sound | ✅ Music, 3D sound, dialogue and cutscene audio |
+| Controls | ✅ Xbox, PlayStation and Switch controllers. 🟡 Mouse and keyboard work but need more testing |
+| Multiplayer / Xbox Live | ❌ Not planned for now |
 
 **Known issues**
-- Small differences from the console in fog, light shafts and some edges of the under-ice sky.
-- The renderer is a straightforward D3D11 path. No ultrawide support yet.
-- Above `Scale=1`, some post-processing passes can miss one pixel row/column at the screen edge, and a faint
-  horizontal line can appear about a third of the way down the screen (where the GPU splits the frame into tiles).
 
-## What to look forward to
+- Most maps hold the game's 30 fps limit. New York's busiest areas can drop to about 25 fps.
+- Fog, light shafts and the edges of the sky under the ice look slightly different from the console in places.
+- No ultrawide support yet.
+- Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
+  show up about a third of the way down the screen.
 
-Planned next, roughly in order:
+## Coming next
 
-1. **Full campaign playthrough.** Play every mission through by hand, start to finish.
-2. **Prebuilt releases.** An installer release for people who don't want to build from source. This is the first
-   release.
-3. **Closer to the console's look.** The Xenos GPU clamps each blend write, and Direct3D 11 does not. Matching this
-   should fix the remaining small differences in fog and light shafts.
-4. **Ultrawide and more PC options**, once the renderer is stable.
+Roughly in this order:
 
-## Getting started
+1. **Play the whole story by hand**, start to finish, and fix what turns up.
+2. **A ready-made installer** for people who don't want to build it themselves. This will be the first release.
+3. **Even closer to the console's look.** Fix the last small differences in fog and light shafts.
+4. **Ultrawide and more PC options**, once the graphics are settled.
+
+## How to play
 
 > [!IMPORTANT]
-> **No game files are included or distributed.** You need your own copy of *Splinter Cell: Double Agent* for Xbox 360.
-> The port is built from the **USA, Europe** disc (`.iso`). Other versions are not supported.
+> **No game files come with this project.** You need your own copy of *Splinter Cell: Double Agent* for Xbox 360.
+> It's made for the **USA, Europe** disc (as an `.iso` file). Other versions won't work.
 
-1. Build the runtime and the installer (`tools/installer/build.bat`). No prebuilt releases exist yet.
-2. Run `SCDA_Setup.exe`, pick your disc image (`.iso`) and an install folder. It checks the executable's
-   SHA-256, extracts the game files to `<dir>\game` and prepares the flat image.
-3. Run `scda.exe` from the install folder.
+1. Build the program and the installer (`tools/installer/build.bat`). There's no download yet.
+2. Run `SCDA_Setup.exe`, pick your disc image (`.iso`) and a folder to install to. It checks that your disc is the
+   right one and copies the game files into `<folder>\game`.
+3. Start `scda.exe` from that folder.
 
-Open the **Extra Settings** menu from the game's own **OPTIONS > EXTRA SETTINGS** (it replaces TV calibration;
-brightness and contrast stay on the OPTIONS page), or any time with **F1** / **L3+R3**. It has three tabs:
+**Extra Settings menu.** Open it from the game's own **OPTIONS > EXTRA SETTINGS** (it replaces TV calibration;
+brightness and contrast stay on the OPTIONS page), or any time with **F1** or **L3+R3**. It has three tabs:
 
-- **Display:** window mode, VSync, internal resolution, anisotropic filtering, clean goggles.
-- **Graphics:** Low / Medium / High / Ultra presets, anti-aliasing (FXAA; the game's own 4x MSAA is always on),
-  image sharpening (0-100%, AMD CAS), and upscaling (Native, Quality, Balanced, Performance, Ultra Performance:
-  picks the internal resolution from the window size, Lanczos upscale).
-- **Update:** your version, the latest GitHub release, and a link to the releases page. After you sign in at the
-  main menu, a notification in the top right says whether an update is out.
+- **Display:** window mode, VSync, resolution scale, texture sharpness (anisotropic filtering), field of view, light
+  distance and clean goggles.
+- **Graphics:** quality presets (Low to Ultra), extra smoothing (FXAA, on top of the game's own 4x anti-aliasing),
+  sharpening, and upscaling (renders at a lower resolution and scales it up, for slower PCs).
+- **Update:** your version and the newest version on GitHub. After you sign in at the main menu, a small message in
+  the top right tells you if there's an update.
 
-Changes apply at once and are saved. The menu never opens by itself; Esc, F1, Start or L3+R3 closes it.
+Changes apply right away and are saved. Close the menu with Esc, F1, Start or L3+R3.
 
-Settings live in `%LOCALAPPDATA%\SCDARecomp\settings.ini`:
+Settings are stored in `%LOCALAPPDATA%\SCDARecomp\settings.ini`:
 
 ```ini
 [Display]
@@ -173,66 +170,73 @@ CleanGoggles=0
 AntiAliasing=Off
 Sharpening=0
 Upscaling=Off
+FOV=75
+LightDistance=4
 [Input]
 MouseLook=1
 MouseSensitivity=1.0
 MouseInvertY=0
 ```
 
-`Scale` (1-4) renders at 1280x720 times Scale and downsamples to the window (2 = 2560x1440).
-`Anisotropy` (1-16, default 1) sets the minimum anisotropic filtering. `Mode` is `windowed`, `borderless` or `fullscreen`.
-`CleanGoggles=1` removes the goggle scanlines and noise. The parser has no inline comments.
+- `Scale` (1-4): the game renders at 1280x720 times this number, then shrinks it to your window. 2 = 2560x1440.
+- `Anisotropy` (1-16): keeps floors and walls sharp when you look at them at an angle.
+- `Mode`: `windowed`, `borderless` or `fullscreen`.
+- `CleanGoggles=1`: no scanlines or noise in the goggle views.
+- `FOV` (60-110): field of view. `LightDistance` (1-8): how far away lights stay on.
+- Don't put comments on the same line as a setting.
 
 <img src="installer.png" width="640" alt="Installer">
 
-## Building from source
+## Building it yourself
 
-Requirements: Windows 10/11 x64, Visual Studio Build Tools 2022 (CMake + Ninja), LLVM `clang-cl`, Python 3, Git.
+You need: Windows 10 or 11 (64-bit), Visual Studio Build Tools 2022 (with CMake and Ninja), LLVM `clang-cl`,
+Python 3 and Git.
 
 ```bat
 :: 1. third-party sources go in external/ (XenonRecomp, XenosRecomp, UnleashedRecomp, ffmpeg)
 tools\build_xenonrecomp.bat        :: applies tools\patches\xenonrecomp_scda.patch
 tools\xex_dump\build.bat
 tools\ffmpeg\configure.bat
-:: 2. recompile the game's PowerPC code into generated/ (needs your own SC4_Offline.xex in assets/)
+:: 2. translate the game's code into generated/ (needs your own SC4_Offline.xex in assets/)
 sh tools/recomp.sh
-:: 3. build the runtime + tests
+:: 3. build the program and run the tests
 tools\build_runtime.bat
 tools\test_runtime.bat
 ```
 
-`STATE.md` holds the full build notes, debug environment variables and current findings.
+`STATE.md` has the detailed build notes, debug switches and current findings.
 
-## Project layout
+## What's in the repo
 
-| Path | Contents |
+| Folder | What's inside |
 |-|-|
-| `runtime/` | Host runtime: kernel/XAM, threads, memory, GPU (PM4 + D3D11 + shader translator), audio |
-| `config/` | XenonRecomp TOML: functions, jump tables, helpers |
-| `tools/` | Installer, XEX dumper, STFS extractor, recompile and check scripts, tests |
-| `docs/` | Triage reports, specs, screenshots |
+| `runtime/` | The "fake console": system calls, threads, memory, graphics (including the shader converter) and sound |
+| `config/` | Settings for the code translator (where functions and jump tables are) |
+| `tools/` | Installer, game file tools, build and check scripts, tests |
+| `docs/` | Notes, plans and screenshots |
 
 ## Credits
 
-Built on [XenonRecomp](https://github.com/hedge-dev/XenonRecomp), [XenosRecomp](https://github.com/hedge-dev/XenosRecomp)
-and patterns from [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp) by hedge-dev. Format knowledge comes
-from [Xenia](https://github.com/xenia-project/xenia), and audio from [FFmpeg](https://ffmpeg.org). See
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The source code is licensed under **GPL-3.0** ([`LICENSE`](LICENSE)).
+Built on [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and [XenosRecomp](https://github.com/hedge-dev/XenosRecomp),
+with ideas from [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp), all by hedge-dev. A lot of what we
+know about the Xbox 360 hardware comes from [Xenia](https://github.com/xenia-project/xenia). Sound decoding uses
+[FFmpeg](https://ffmpeg.org). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The source code is licensed under
+**GPL-3.0** ([`LICENSE`](LICENSE)).
 
 ## Legal
 
-Unofficial fan project, not affiliated with or endorsed by Ubisoft or Microsoft. *Splinter Cell*, *Splinter Cell:
-Double Agent*, Sam Fisher and all related characters, names, logos and content are the property of Ubisoft
-Entertainment. Xbox and Xbox 360 are trademarks of Microsoft.
+This is an unofficial fan project. It isn't made, approved or supported by Ubisoft or Microsoft. *Splinter Cell*,
+*Splinter Cell: Double Agent*, Sam Fisher and everything related belong to Ubisoft Entertainment. Xbox and Xbox 360
+are trademarks of Microsoft.
 
-- **No game data is included.** This repository contains only original source code, build scripts and configuration
-  (function addresses and jump tables). It ships no executables, assets, audio, video or text from the game.
-- **You must own the game.** The installer works only from your own *Splinter Cell: Double Agent* Xbox 360 disc image.
-  It checks the image's hash and builds the game files on your PC. Do not ask for or share game files or disc images
-  here; such issues will be closed.
-- **No piracy.** This project does not help anyone obtain the game. To read the game's code, the tools decrypt and
-  unpack the executable from your own disc on your PC, as other Xbox 360 recompilation projects do.
-- **Screenshots** in `docs/images/` were captured from this project running the author's own copy of the game. They
-  are shown only to document the port's progress.
-- **Takedown requests:** if you are a rights holder and have a concern, please open an issue or contact the
-  maintainer. It will be addressed promptly.
+- **No game files are included.** This repository only has original source code, build scripts and settings (like
+  where functions are in the game's program). It contains no game program, graphics, sound, video or text.
+- **You need to own the game.** The installer only works with your own Xbox 360 disc image of *Splinter Cell:
+  Double Agent*. It checks the image and builds the game files on your own PC. Please don't ask for or share game
+  files or disc images here. Those issues will be closed.
+- **No piracy.** This project doesn't help anyone get the game. To read the game's code, the tools unpack the program
+  from your own disc on your own PC, the same way other Xbox 360 recompilation projects do.
+- **Screenshots** in `docs/images/` were taken with this project running the author's own copy of the game. They're
+  only here to show progress.
+- **Rights holders:** if you have a concern, please open an issue or contact the maintainer, and it will be handled
+  quickly.
