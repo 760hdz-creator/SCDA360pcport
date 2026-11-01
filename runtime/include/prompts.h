@@ -34,3 +34,6 @@ const char* PromptIconName(int index);
 // Redraws icon `index` for `style` over width*height RGBA8 texels (R in the low byte, straight
 // alpha). False (texels untouched) for Xbox.
 bool PromptRedraw(int index, PromptStyle style, std::vector<uint32_t>& texels, uint32_t width, uint32_t height);
+// Loading-screen strip Screens\<lang>\Continue.bmp has its A button baked in: redraw it for
+// `style` in place (whole BMP file bytes). False (untouched) for Xbox or an unknown layout.
+bool PromptPatchContinueBmp(std::vector<uint8_t>& file, PromptStyle style);

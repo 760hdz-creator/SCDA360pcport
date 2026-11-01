@@ -8,7 +8,11 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <filesystem>
+#include <fstream>
 #include <runtime.h>
+#include <prompts.h>
+#include <settings.h>
 
 constexpr uint32_t X_STATUS_SUCCESS = 0;
 constexpr uint32_t X_STATUS_INVALID_HANDLE = 0xC0000008;
@@ -166,6 +170,36 @@ bool CloseGuestFile(uint32_t handle)
     return true;
 }
 
+// Screens\<lang>\Continue.bmp bakes in the Xbox A button: for other prompt styles, open a copy
+// redrawn by PromptPatchContinueBmp (next to settings.ini, prompts\Continue_<lang>_<style>.bmp).
+static std::string PromptScreenPath(const std::string& host)
+{
+    const size_t slash = host.find_last_of('\\');
+    const PromptStyle style = CurrentPromptStyle();
+    if (style == PromptStyle::Xbox || slash == std::string::npos || slash == 0 || _stricmp(host.c_str() + slash + 1, "continue.bmp") != 0)
+        return host;
+    const size_t langSlash = host.find_last_of('\\', slash - 1);
+    const std::string lang = langSlash == std::string::npos ? "x" : host.substr(langSlash + 1, slash - langSlash - 1);
+    const std::filesystem::path dir = SettingsPath().parent_path() / "prompts";
+    const std::filesystem::path out = dir / ("Continue_" + lang + "_" + std::to_string(int(style)) + ".bmp");
+    std::vector<uint8_t> bytes;
+    {
+        std::ifstream in(host, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    if (!PromptPatchContinueBmp(bytes, style))
+        return host;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream o(out, std::ios::binary | std::ios::trunc);
+    o.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    o.close();
+    if (!o.good())
+        return host;
+    RuntimeLog("[prompts] %s -> %s\n", host.c_str(), out.string().c_str());
+    return out.string();
+}
+
 static uint32_t OpenFile(PPCContext& ctx, uint32_t pHandle, uint32_t access, uint32_t attrs, uint32_t iosb, uint32_t disposition)
 {
     std::string guest = GuestPath(attrs), host = HostPath(guest);
@@ -177,6 +211,8 @@ static uint32_t OpenFile(PPCContext& ctx, uint32_t pHandle, uint32_t access, uin
     if (!hostAccess) hostAccess = GENERIC_READ;
     if (access & FILE_WRITE_ATTRIBUTES) hostAccess |= FILE_WRITE_ATTRIBUTES;
 
+    if (!(hostAccess & GENERIC_WRITE))
+        host = PromptScreenPath(host);
     DWORD attr = GetFileAttributesA(host.c_str());
     bool isDir = attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY);
     HANDLE h = CreateFileA(host.c_str(), isDir ? GENERIC_READ : hostAccess, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,

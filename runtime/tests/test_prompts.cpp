@@ -105,6 +105,46 @@ TEST(prompt_icons_redraw)
     CHECK(std::string(PromptIconName(0)) == "button_a");
 }
 
+// Loading-screen Continue.bmp: the baked green A disc is replaced, the rest of the strip kept.
+TEST(prompt_continue_bmp_patched)
+{
+    constexpr uint32_t w = 1280, h = 95, stride = w * 3, offset = 54;
+    std::vector<uint8_t> bmp(offset + stride * h, 0x10);
+    auto put32 = [&](size_t o, uint32_t v) { memcpy(&bmp[o], &v, 4); };
+    bmp[0] = 'B', bmp[1] = 'M';
+    put32(10, offset), put32(14, 40), put32(18, w), put32(22, h), put32(30, 0);
+    bmp[26] = 1, bmp[27] = 0, bmp[28] = 24, bmp[29] = 0;
+    auto px = [&](int x, int y) { return &bmp[offset + stride * size_t(h - 1 - y) + size_t(x) * 3]; };
+    for (int y = 18; y <= 52; y++)
+        for (int x = 84; x <= 118; x++)
+            if ((x - 101) * (x - 101) + (y - 35) * (y - 35) <= 17 * 17)
+                px(x, y)[0] = 0x20, px(x, y)[1] = 0xD0, px(x, y)[2] = 0x20; // green (BGR)
+    std::vector<uint8_t> xbox = bmp;
+    CHECK(!PromptPatchContinueBmp(xbox, PromptStyle::Xbox));
+    CHECK(xbox == bmp);
+    std::vector<uint8_t> ps = bmp;
+    CHECK(PromptPatchContinueBmp(ps, PromptStyle::PS5));
+    CHECK(ps.size() == bmp.size());
+    uint32_t green = 0;
+    for (int y = 14; y <= 56; y++)
+        for (int x = 80; x <= 122; x++)
+        {
+            const uint8_t* p = &ps[px(x, y) - bmp.data()];
+            green += p[1] > p[2] + 40 && p[1] > p[0] + 40 && p[1] > 110;
+        }
+    if (const char* dir = getenv("SCDA_DUMP_PROMPTS"))
+        if (FILE* f = fopen((std::string(dir) + "/continue_ps5.bmp").c_str(), "wb"))
+        {
+            fwrite(ps.data(), 1, ps.size(), f);
+            fclose(f);
+        }
+    CHECK(green < 20);
+    CHECK(memcmp(&ps[px(300, 40) - bmp.data()], px(300, 40), 3) == 0); // text area untouched
+    put32(18, 640);
+    std::vector<uint8_t> other = bmp;
+    CHECK(!PromptPatchContinueBmp(other, PromptStyle::PS5)); // unknown layout left alone
+}
+
 TEST(button_prompts_setting_read)
 {
     CHECK(LoadInputSettings("C:/nonexistent/settings.ini").buttonPrompts == "Auto");

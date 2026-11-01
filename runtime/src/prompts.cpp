@@ -514,3 +514,52 @@ bool PromptRedraw(int index, PromptStyle style, std::vector<uint32_t>& texels, u
     }
     return true;
 }
+
+// Screens\<lang>\Continue.bmp (loading screen "A Continue" strip, 1280x95 24-bit bottom-up, the
+// same in every language): the A button is baked in, a 35 px green disc centred at (101, 35)
+// top-down. Erase the disc (each row's background from just left of it) and composite the
+// redrawn button_a, sized so its disc matches.
+bool PromptPatchContinueBmp(std::vector<uint8_t>& file, PromptStyle style)
+{
+    if (style == PromptStyle::Xbox || file.size() < 54 || file[0] != 'B' || file[1] != 'M')
+        return false;
+    auto u32 = [&](size_t o) { uint32_t v; memcpy(&v, &file[o], 4); return v; };
+    const uint32_t offset = u32(10), width = u32(18);
+    const int32_t height = int32_t(u32(22));
+    const uint16_t bpp = uint16_t(file[28] | (file[29] << 8));
+    if (width != 1280 || height != 95 || bpp != 24 || u32(30) != 0)
+        return false;
+    const size_t stride = (size_t(width) * 3 + 3) & ~size_t(3);
+    if (offset + stride * height > file.size())
+        return false;
+    auto px = [&](int x, int y) { return &file[offset + stride * size_t(height - 1 - y) + size_t(x) * 3]; }; // BGR, y top-down
+    constexpr int kCx = 101, kCy = 35, kErase = 21, kSize = 48; // disc ~52/64 of an icon
+    const uint8_t* c = px(kCx + 8, kCy - 8); // on the disc, off the letter
+    if (!(c[1] > c[2] + 40 && c[1] > 110))
+        return false; // not the layout we know
+    int index = -1;
+    for (int i = 0; i < int(std::size(kIcons)); i++)
+        if (!strcmp(kIcons[i].name, "button_a"))
+            index = i;
+    std::vector<uint32_t> icon(size_t(kSize) * kSize);
+    if (!PromptRedraw(index, style, icon, kSize, kSize))
+        return false;
+    for (int y = kCy - kErase; y <= kCy + kErase; y++)
+    {
+        const uint8_t* bg = px(kCx - kErase - 1, y);
+        for (int x = kCx - kErase; x <= kCx + kErase; x++)
+            if ((x - kCx) * (x - kCx) + (y - kCy) * (y - kCy) <= kErase * kErase)
+                memcpy(px(x, y), bg, 3);
+    }
+    const int x0 = kCx - kSize / 2, y0 = kCy - kSize / 2;
+    for (int y = 0; y < kSize; y++)
+        for (int x = 0; x < kSize; x++)
+        {
+            const uint32_t s = icon[size_t(y) * kSize + x], a = s >> 24;
+            uint8_t* d = px(x0 + x, y0 + y);
+            const uint32_t rgb[3] = { (s >> 16) & 0xFF, (s >> 8) & 0xFF, s & 0xFF }; // B G R
+            for (int k = 0; k < 3; k++)
+                d[k] = uint8_t((rgb[k] * a + d[k] * (255 - a) + 127) / 255);
+        }
+    return true;
+}
