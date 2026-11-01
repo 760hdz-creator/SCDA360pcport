@@ -32,6 +32,32 @@ stands in for the console:
 
 ## Recent progress
 
+**November 2026**
+
+- **Cozumel ocean reaches the horizon.** A black, stair-stepped band (with a flickering edge) sat between the sea and
+  the sky. The far ocean plane uses an index offset the renderer ignored, so it drew the wrong vertices. Fixed; the sea
+  now runs to a clean horizon like on the Xbox 360.
+- **New Light distance option** (F1 > Display, `[Display] LightDistance=1-8`). Every light switches off beyond a set
+  distance, which leaves far parts of levels dark (for example the Iceland geothermal plant). The default x4 matches
+  the PC widescreen fix; x1 is the console's distance. Costs about 1.5 fps on the heaviest maps.
+- **Reflections and water.** Cube-map textures are now bound, so environment reflections are no longer black, and the
+  water shaders' reflections work.
+- **Shadows and dark bands.** Kinshasa's sun shadows no longer cover the whole ground, and the dark band at the bottom
+  of the screen in New York and the Hotel is gone.
+- **Solid walls.** One-sided walls stay solid when the camera ends up inside them (the Iceland shack was see-through).
+  `DrawBackFaces=0` restores the console's behaviour.
+- **No more black flashes** in the JBA headquarters (occlusion query results now arrive within one frame).
+- **EMF vision** samples its 3D noise texture, like the console.
+- **More fixes:** the bottom band on the sniper scope, point sprites, 1D textures and vertex formats. All 4,532
+  shaders in the game's 20 packages now translate and compile.
+- **Controllers and prompts.** PlayStation and Switch controllers work natively (SDL3, with rumble). Button prompts
+  match the pad or keyboard you use, including the A button on the loading screens.
+- **F1 menu** gains a field of view slider (60-110, 75 is the game's own), and L1/R1 switch tabs.
+- **Installer** has a new window, a Start menu shortcut and an update mode that only replaces the game executable
+  (your saves and settings stay).
+
+**Earlier**
+
 - **Display gamma matches the console.** The game uploads its own gamma ramp to the GPU at boot, which deepens the
   shadows. The port now applies it at present, so night scenes and interiors are as dark as on the Xbox 360.
 - **Real 4x MSAA and no more glow streaks.** Multisampled surfaces are now emulated the way the Xenos GPU lays them
@@ -62,36 +88,23 @@ stands in for the console:
 - **Shader census clean.** With an empty shader cache, every map translates and compiles its shaders (490 in all) with
   no failures.
 
-![Scale 1 vs Scale 3](docs/images/scale_compare.jpg)
-
-*Kinshasa at the console's 1280x720 (left) and at `Scale=3` (right), zoomed in. The two shots come from separate
-runs, so the camera position differs slightly.*
-
 ## Screenshots
 
-Shots come from the current build, running natively on Windows. Shots marked *Scale 2* or *Scale 3* use the internal
-resolution setting; the rest are at the console's 1280x720.
+Shots come from the current build (November 2026), running natively on Windows at `Scale=2` (2560x1440) with 16x
+anisotropic filtering.
 
 | | |
 |:-:|:-:|
-| ![Kinshasa with shadows and gamma](docs/images/kinshasa_shadows.jpg) | ![Iceland: clean night vision](docs/images/iceland_nightvision_clean.jpg) |
-| **Kinshasa**: current build, with the console's gamma and Sam's shadow | **Iceland**: night vision on the Osprey with `CleanGoggles=1` |
-| ![Kinshasa at Scale 3](docs/images/kinshasa_scale3.jpg) | ![Kinshasa gate at Scale 2](docs/images/kinshasa_gate.jpg) |
-| **Kinshasa**: retrieving the plans (*Scale 3*) | **Kinshasa**: through the gate (*Scale 2, 16x anisotropic*) |
-| ![Iceland: night vision](docs/images/iceland_nightvision.jpg) | ![Iceland: intake pipe](docs/images/iceland_pipe_dive.jpg) |
-| **Iceland**: night vision under the ice | **Iceland**: swimming through the plant's intake pipe |
-| ![Iceland: surfacing at the plant](docs/images/iceland_plant_surface.jpg) | ![Iceland: Osprey bay](docs/images/iceland_osprey.jpg) |
-| **Iceland**: surfacing at the geothermal plant | **Iceland**: Osprey bay before the drop (*Scale 2*) |
-| ![Mission complete](docs/images/mission_complete.jpg) | ![Ellsworth Penitentiary](docs/images/jail_cell.jpg) |
-| **MISSION COMPLETE** after Iceland, then on to the next mission | **Ellsworth Penitentiary**: helping Jamie escape (*Scale 3*) |
-| ![Sea of Okhotsk: skydive](docs/images/okhotsk_skydive.jpg) | ![Sea of Okhotsk: under the ice](docs/images/okhotsk_ice_dive.jpg) |
-| **Sea of Okhotsk**: HALO jump toward the supertanker (*Scale 2*) | **Sea of Okhotsk**: diving under the ice (*Scale 2*) |
-| ![Cozumel: cabin](docs/images/cozumel_cabin.jpg) | ![Cozumel: cruise ship](docs/images/cozumel_cruise_ship.jpg) |
-| **Cozumel**: Sam's cabin on the cruise ship (*Scale 2*) | **Cozumel**: climbing the hull (*Scale 2*) |
-| ![Kinshasa](docs/images/kinshasa_city.jpg) | ![Kinshasa streets](docs/images/kinshasa_courtyard.jpg) |
-| **Kinshasa**: retrieving the plans from the camp (*Scale 2*) | **Kinshasa**: the ruined streets (*Scale 2*) |
-| ![Kinshasa garage](docs/images/kinshasa_tunnel.jpg) | ![New York harbor](docs/images/newyork_harbor.jpg) |
-| **Kinshasa**: underground garage (*Scale 2*) | **New York**: the bomb boat at Liberty Island (*Scale 2*) |
+| ![Cozumel: the sea to the horizon](docs/images/cozumel_horizon.jpg) | ![Iceland: the geothermal plant at night](docs/images/iceland_plant_vista.jpg) |
+| **Cozumel**: the sea now reaches the horizon | **Iceland**: the geothermal plant, distant lights on (Light distance x4) |
+| ![Iceland: EMF vision](docs/images/iceland_emf.jpg) | ![Iceland: Osprey bay](docs/images/iceland_osprey.jpg) |
+| **Iceland**: EMF vision | **Iceland**: Osprey bay before the drop |
+| ![Ellsworth Penitentiary](docs/images/jail_cell.jpg) | ![Sea of Okhotsk: under the ice](docs/images/okhotsk_ice_dive.jpg) |
+| **Ellsworth Penitentiary**: helping Jamie escape | **Sea of Okhotsk**: diving under the ice |
+| ![Kinshasa](docs/images/kinshasa_camp.jpg) | ![Shanghai hotel](docs/images/hotel.jpg) |
+| **Kinshasa**: retrieving the plans, with sun shadows | **Shanghai**: arriving at the hotel |
+| ![JBA headquarters](docs/images/jba_hq.jpg) | |
+| **New York**: JBA headquarters | |
 
 ## Status
 
