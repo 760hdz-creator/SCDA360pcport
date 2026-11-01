@@ -10,7 +10,7 @@
 #include <gpu/xenos/translate.h>
 
 // Bump when the translator or shader_common changes: old disk entries are then ignored.
-static constexpr uint32_t kTranslatorVersion = 19; // v19: ALU vector result deferred past the co-issued scalar op
+static constexpr uint32_t kTranslatorVersion = 20; // v20: PRED_SET_INV 1 -> 0 (v19: ALU vector result deferred past the co-issued scalar op)
 static constexpr uint32_t kCacheMagic = 0x53444353; // "SCDS"
 
 struct CacheHeader

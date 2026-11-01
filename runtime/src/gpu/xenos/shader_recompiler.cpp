@@ -1077,7 +1077,10 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
             break;
 
         case AluScalarOpcode::SetpInv:
-            print("{0} == 0.0 ? 1.0 : {0}", op(SCALAR_0));
+            // PRED_SET_INV: 1 (inactive one level down = the else branch turns on) -> 0 with p0 set,
+            // 0 (if branch was active) -> 1, deeper levels unchanged. Keeping 1 left every else of a
+            // nested predicate chain off (Hotel rain-glass per-tile offset never applied).
+            print("{0} == 1.0 ? 0.0 : ({0} == 0.0 ? 1.0 : {0})", op(SCALAR_0));
             break;
 
         case AluScalarOpcode::SetpPop:

@@ -1822,7 +1822,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         }();
         const bool tracePs = std::find(tracePsList.begin(), tracePsList.end(), d.ps->hash) != tracePsList.end();
         if (tracePs)
-            for (uint32_t c : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 15u, 16u, 20u, 21u, 22u, 23u, 220u, 253u, 254u })
+            for (uint32_t c : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 15u, 16u, 20u, 21u, 22u, 23u, 220u, 225u, 229u, 230u, 231u, 232u, 245u, 246u, 247u, 248u, 249u, 250u, 253u, 254u })
             {
                 auto f = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + 1024 + c * 4 + i]); };
                 RuntimeLog("[rtrace]   ps c%u %g %g %g %g blend %08X\n", c, f(0), f(1), f(2), f(3), r.regs[0x2201]);
