@@ -185,6 +185,8 @@ public:
         m_openSync += end;
         m_unanswered += end;
         m_open.queries.push_back({ uint32_t(m_open.draws.size()), address, end, generation });
+        if (end)
+            m_provisional.push_back({ address, generation, m_next });
     }
     void AddFence(uint32_t physical, uint32_t value)
     {
@@ -254,6 +256,7 @@ public:
         m_partialDraws = m_partialResolves = 0;
         m_open.stats.shaders = uint32_t(ShaderCacheSize());
         m_open.stats.frame = m_next++;
+        AnswerLateQueriesLocked();
         if (getenv("SCDA_TRACE_SNAP") && m_open.stats.frame % 100 == 0)
             RuntimeLog("[snap] frame %llu: skip %llu cmp %llu (%llu KB) diff %llu (%llu KB) copy %llu (%llu KB)\n",
                 (unsigned long long)m_open.stats.frame, statSkip, statCmp, statCmpBytes >> 10, statDiff, statDiffBytes >> 10, statCopy,
@@ -335,6 +338,46 @@ private:
         m_lastActivity = now;
     }
     void TouchEpochLocked() { m_epoch = (m_epoch | 1ull << 63) + (1ull << 32); }
+    // Query latency cap: an end issued in guest frame F whose block still holds the title's marker
+    // when frame F+1 closes gets the fully-visible fallback now; the host result, when it lands for
+    // the same generation, overwrites it. The renderer can run 2-3 frames behind the CP (4K, Scale
+    // 3); the title keeps a mesh hidden until a new count says visible, so meshes turning into view
+    // flashed black for those frames (JBA HQ). A 360 GPU trails by about one frame. A late "visible"
+    // only costs drawing something hidden. SCDA_QUERY_STRICT=1: wait for host results (old behaviour).
+    void AnswerLateQueriesLocked()
+    {
+        static const bool strict = getenv("SCDA_QUERY_STRICT") != nullptr;
+        static const bool trace = getenv("SCDA_TRACE_QUERY") != nullptr;
+        if (strict)
+        {
+            m_provisional.clear();
+            return;
+        }
+        size_t keep = 0;
+        bool wrote = false;
+        for (size_t i = 0; i < m_provisional.size(); i++)
+        {
+            const Provisional& p = m_provisional[i];
+            if (p.frame + 2 > m_next)
+            {
+                m_provisional[keep++] = p;
+                continue;
+            }
+            constexpr uint32_t kMarker = 0xFFFFFEED;
+            const bool pending = (GuestLoad32(p.address + 16) == kMarker && GuestLoad32(p.address + 20) == kMarker) ||
+                                 (GuestLoad32(p.address + 8) == kMarker && GuestLoad32(p.address + 12) == kMarker);
+            if (pending && WriteOcclusionResult(p.address, p.generation, kOcclusionFallbackSamples))
+            {
+                wrote = true;
+                if (trace)
+                    RuntimeLog("[query] frame %llu late: end %08X gen %u provisional visible\n", (unsigned long long)(m_next - 1), p.address,
+                        p.generation);
+            }
+        }
+        m_provisional.resize(keep);
+        if (wrote)
+            TouchEpochLocked();
+    }
     // A dropped Frame still happened for the title: its query ends get the fallback, its register
     // writes and fences lead the next Frame (fences stay behind queries the renderer still runs).
     void Drop(Frame& f, Frame& next)
@@ -385,6 +428,12 @@ private:
     uint64_t m_partials = 0;
     std::atomic<bool> m_cpIdle = false;
     std::atomic<uint32_t> m_unanswered = 0;
+    struct Provisional
+    {
+        uint32_t address, generation;
+        uint64_t frame; // guest frame the end was issued in
+    };
+    std::vector<Provisional> m_provisional; // ends not yet past the latency cap (AnswerLateQueriesLocked)
     std::chrono::steady_clock::time_point m_lastActivity{}; // last draw, query or swap added
     // SCDA_TRACE_SNAP=1: per-100-frame snapshot counters.
     unsigned long long statSkip = 0, statCmp = 0, statCmpBytes = 0, statDiff = 0, statDiffBytes = 0, statCopy = 0, statCopyBytes = 0;

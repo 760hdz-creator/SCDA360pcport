@@ -270,3 +270,25 @@ TEST(register_writes_carry_over_dropped_frames)
     CHECK_EQ(f.draws[0].regWritesEnd, 3u);
     CHECK_EQ(f.draws[1].regWritesEnd, 3u);
 }
+
+// Latency cap: an end still marked when the frame after it closes reads fully visible; one the
+// renderer answered in time keeps its count.
+TEST(late_query_gets_provisional_visible_after_one_frame)
+{
+    TestGuestBase();
+    FrameQueue q(8);
+    const uint32_t a = 0xA0682000, b = 0xA0682040;
+    for (uint32_t block : { a, b })
+    {
+        GuestStore32(block + 16, 0xFFFFFEED);
+        GuestStore32(block + 20, 0xFFFFFEED);
+        q.AddQuery(block, false);
+        q.AddQuery(block, true);
+    }
+    q.EndFrame(); // frame 0 closes: within the cap
+    CHECK_EQ(GuestLoad32(a + 16), 0xFFFFFEEDu);
+    CHECK(WriteOcclusionResult(b, OcclusionGeneration(b), 7)); // b answered by the renderer in time
+    q.EndFrame(); // frame 1 closes: a is late
+    CHECK_EQ(GuestLoad32(a + 16), __builtin_bswap32(kOcclusionFallbackSamples));
+    CHECK_EQ(GuestLoad32(b + 16), __builtin_bswap32(7u));
+}
