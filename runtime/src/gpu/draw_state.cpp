@@ -55,6 +55,10 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
         else if (zFunc == 1 || zFunc == 3) // LESS / LEQUAL
             c.vpOffset[3] = -skyDepthEps;
     }
+    // SCDA_DEPTH_EPS_ALL=<value>: debug, same nudge at every depth (z offset).
+    static const float allEps = getenv("SCDA_DEPTH_EPS_ALL") ? float(atof(getenv("SCDA_DEPTH_EPS_ALL"))) : 0.0f;
+    if (allEps != 0.0f && (c.vte & 0x20) && (depthControl & 7) == 2)
+        c.vpOffset[2] += (zFunc == 4 || zFunc == 6) ? allEps : (zFunc == 1 || zFunc == 3) ? -allEps : 0.0f;
     c.windowToNdc[0] = 2.0f / float(rtWidth);
     c.windowToNdc[1] = 2.0f / float(rtHeight);
     // SQ_PROGRAM_CNTL (0x2180) bit 18 PARAM_GEN: the PS gets the pixel position (xy) and point sprite

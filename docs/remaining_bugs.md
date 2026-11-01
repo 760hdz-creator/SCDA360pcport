@@ -202,6 +202,18 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Needs:** reverse-engineering the title's UnrealScript menu pages (UE2.5 GUI in `game/System` packages) to add
   an item and route its selection to the overlay. Not started.
 
+## FIXED. Black walls and floors near the camera (2026-11-01, regression from 445b9de)
+
+- **Symptom (user):** Kinshasa01 start (alley wall), Iceland Osprey ramp, Cozumel_01 room: walls/floors black.
+- **Cause:** the far-only sky depth nudge in `XenosViewport` tested `s.z < 1e-4` per vertex. Vertices behind the
+  camera (w < 0) also have z/w < 0, got the nudge, and after the multiply by negative w pulled near-plane-crossing
+  triangles' depth below their Z prepass (VS 74e0c24e, z write) -> the colour pass (VS c47defcd, GEQUAL, no
+  write) failed. Fix: nudge only when w > 0. Translator v24.
+- **Found with:** `SCDA_PIXEL_WATCH_DEPTH=1` (depth per draw at the watched pixel; one depth write = prepass
+  3508), `SCDA_SKY_DEPTH_EPS=0` (black gone), `SCDA_DEPTH_EPS_ALL=<v>` (debug: nudge at every depth).
+- **Checked:** Kinshasa01 1200/1500, Iceland 1000-1900, Cozumel_01 1000-1900 fixed (`_run/black/v_*.png`,
+  `fix/`). NY02 sky A-B-A 200 frames: 0 glitches (control with the nudge off also 0: test not sensitive).
+
 ## FIXED. Sky under the ice smeared with underwater shapes (2026-11-01)
 
 - **Symptom:** Iceland dive, looking up at the ice hole: dark smears over the sky and clouds.

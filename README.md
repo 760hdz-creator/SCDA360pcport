@@ -48,6 +48,8 @@ How, in plain terms:
 - **Hotel mirrors are back.** The bathroom mirrors reflect Sam and the room again instead of showing a dark wall.
 - **Hotel wardrobe stays the same.** Its red lattice doors no longer turn plain white until you walk up close.
 - **No more flickering moon in New York.** The moon and clouds no longer pop out for a frame at a time.
+- **No more black walls and floors** at the start of Kinshasa, on the Osprey ramp in Iceland and in the Cozumel
+  room. A fix for New York's sky also darkened large surfaces close to the camera.
 - **Clear sky through the ice.** Diving under the ice in Iceland and the Sea of Okhotsk, the view up through the
   water was smeared with Sam and other things from underwater. The water's view of the world above now leaves out everything below the surface, like the console.
 - **Cozumel's sea reaches the horizon.** The black, jagged strip between the sea and the sky is gone.

@@ -91,7 +91,10 @@ float4 XenosViewport(float4 p)
     if (vte & 0x10) s.z *= g_VpScale.z;
     if (vte & 0x20) s.z += g_VpOffset.z;
     // Far-only depth nudge for non-writing depth tests (sky layers; draw_state.cpp): w = signed epsilon.
-    if (g_VpOffset.w > 0.0 ? s.z < 1e-4 : (g_VpOffset.w < 0.0 && s.z > 1.0 - 1e-4)) s.z += g_VpOffset.w;
+    // Only vertices in front of the camera: behind it z/w is negative too, and nudging those (then
+    // multiplied by a negative w) tilts near-plane-crossing triangles below their Z prepass depth
+    // (Kinshasa alley wall, Iceland ramp, Cozumel floor went black under GEQUAL).
+    if (w > 0.0 && (g_VpOffset.w > 0.0 ? s.z < 1e-4 : (g_VpOffset.w < 0.0 && s.z > 1.0 - 1e-4))) s.z += g_VpOffset.w;
     // D3D9 half-pixel offset at internal scale > 1: exact (0.5 guest) except on integer edges,
     // which take 0.5 host pixel so integer-edged rects (the 1x1..16x16 luminance chain) cover
     // exactly the host pixels of the guest pixels they cover at scale 1. Half-integer edges (D3D9

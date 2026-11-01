@@ -1817,11 +1817,14 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                 v.push_back(strtoull(p, nullptr, 16));
             return v;
         }();
-        if (std::find(traceVscList.begin(), traceVscList.end(), d.vs->hash) != traceVscList.end())
+        // (SCDA_TRACE_VSC=0: every VS.)
+        if (std::find(traceVscList.begin(), traceVscList.end(), d.vs->hash) != traceVscList.end() ||
+            (traceVscList.size() == 1 && traceVscList[0] == 0))
             for (uint32_t c = 8; c < 18; c++)
-                RuntimeLog("[rtrace]   vc%u %g %g %g %g\n", c, std::bit_cast<float>(r.regs[kRegAluConstants + c * 4]),
+                RuntimeLog("[rtrace]   vc%u %g %g %g %g (%08X %08X %08X %08X)\n", c, std::bit_cast<float>(r.regs[kRegAluConstants + c * 4]),
                     std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 1]), std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 2]),
-                    std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 3]));
+                    std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 3]), r.regs[kRegAluConstants + c * 4], r.regs[kRegAluConstants + c * 4 + 1],
+                    r.regs[kRegAluConstants + c * 4 + 2], r.regs[kRegAluConstants + c * 4 + 3]);
         // SCDA_TRACE_PS=<ps hash hex>[,..]: draws with one of those PS also log PS c0-c7 and blend control.
         static const std::vector<uint64_t> tracePsList = []
         {
@@ -2399,6 +2402,47 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         RuntimeLog("[pixel]   psbools %08X %08X %08X %08X loops %08X %08X\n", r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
                             r.regs[kRegBoolConstants + 6], r.regs[kRegBoolConstants + 7], r.regs[kRegLoopConstants + 16], r.regs[kRegLoopConstants + 31]);
                         lastValue = v;
+                    }
+                }
+            }
+            // SCDA_PIXEL_WATCH_DEPTH=1: also the bound depth at that texel (whole-resource copy, slow).
+            static const bool watchDepth = getenv("SCDA_PIXEL_WATCH_DEPTH") != nullptr;
+            auto z = r.bound ? r.depthTargets.find(r.boundKeys[4]) : r.depthTargets.end();
+            static float lastDepth = -1.0f;
+            if (watchDepth && z != r.depthTargets.end())
+            {
+                ComPtr<ID3D11Resource> res;
+                ComPtr<ID3D11Texture2D> tex;
+                z->second->GetResource(&res);
+                D3D11_TEXTURE2D_DESC zd;
+                if (SUCCEEDED(res.As(&tex)) && (tex->GetDesc(&zd), uint32_t(hx) < zd.Width && uint32_t(hy) < zd.Height))
+                {
+                    static ComPtr<ID3D11Texture2D> zst;
+                    static uint32_t zw = 0, zh = 0;
+                    if (!zst || zw != zd.Width || zh != zd.Height)
+                    {
+                        D3D11_TEXTURE2D_DESC sd = zd;
+                        sd.Usage = D3D11_USAGE_STAGING;
+                        sd.BindFlags = 0;
+                        sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                        zst.Reset();
+                        m_device->CreateTexture2D(&sd, nullptr, &zst);
+                        zw = zd.Width, zh = zd.Height;
+                    }
+                    D3D11_MAPPED_SUBRESOURCE zm;
+                    if (zst)
+                    {
+                        m_context->CopyResource(zst.Get(), tex.Get());
+                        if (SUCCEEDED(m_context->Map(zst.Get(), 0, D3D11_MAP_READ, 0, &zm)))
+                        {
+                            float depth;
+                            memcpy(&depth, (const uint8_t*)zm.pData + size_t(hy) * zm.RowPitch + size_t(hx) * 8, 4);
+                            m_context->Unmap(zst.Get(), 0);
+                            if (depth != lastDepth)
+                                RuntimeLog("[pixel] draw %u vs %016llx ps %016llx depth %.9g zctl %08X ib %08X n %u\n", m_lastDrawn + m_lastSkipped - 1,
+                                    (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, depth, r.regs[0x2200], d.indexBase, d.indexCount);
+                            lastDepth = depth;
+                        }
                     }
                 }
             }
