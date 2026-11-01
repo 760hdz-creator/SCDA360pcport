@@ -1242,7 +1242,9 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     // DrawBackFaces: opaque draws (no blending) without stencil keep both sides; the depth pass resolves
     // them. Blended passes and stencil tricks (light volumes, shadows) keep the title's culling.
     const bool backFaces = m_drawBackFaces && !b.enable && !(regs[0x2200] & 1);
-    uint32_t cull = noCull || backFaces ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs), noClip = (regs[0x2204] >> 16) & 1;
+    static const bool noDepthClip = getenv("SCDA_NO_DEPTH_CLIP") != nullptr; // A/B: never clip z
+    uint32_t cull = noCull || backFaces ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs),
+             noClip = noDepthClip || ((regs[0x2204] >> 16) & 1);
     auto& raster = r.raster[cull | (ccw << 4) | (noClip << 5)];
     if (!raster)
     {
@@ -2156,13 +2158,37 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                     d.primType, int(d.index32), d.indexEndian, count, reset, resets, maxv, r.regs[0x2205], first.c_str());
             }
         }
+        // VGT_INDX_OFFSET (0x2102, 24 bits) is added to every fetched index. Cozumel's far ocean plane
+        // indexes the last 8 vertices of the ocean grid's buffer with offset 4604; without it the
+        // horizon drew 8 grid vertices instead (black band). Reset indices stay strip cuts.
+        // SCDA_NO_INDEX_OFFSET=1: old behaviour (A/B).
+        static const bool noIndexOffset = getenv("SCDA_NO_INDEX_OFFSET") != nullptr;
+        if (const uint32_t indexOffset = r.regs[0x2102] & 0xFFFFFF; indexOffset && !indices.empty() && !noIndexOffset)
+        {
+            const bool resetOn = (r.regs[0x2205] >> 21) & 1;
+            const uint32_t reset = r.regs[0x2103];
+            std::vector<uint8_t> out(size_t(count) * 4);
+            for (uint32_t i = 0; i < count; i++)
+            {
+                uint32_t v;
+                if (wide)
+                    memcpy(&v, &indices[i * 4], 4);
+                else
+                    v = uint16_t(indices[i * 2] | (indices[i * 2 + 1] << 8));
+                const bool cut = v == (wide ? 0xFFFFFFFFu : 0xFFFFu) || (resetOn && v == (wide ? reset : reset & 0xFFFF));
+                v = cut ? 0xFFFFFFFFu : v + indexOffset;
+                memcpy(&out[i * 4], &v, 4);
+            }
+            indices.swap(out);
+            wide = true;
+        }
         if (expand)
         {
             std::vector<uint32_t> list(count);
             for (uint32_t i = 0; i < count; i++)
                 if (indices.empty())
                     list[i] = i;
-                else if (d.index32)
+                else if (wide)
                     memcpy(&list[i], &indices[i * 4], 4);
                 else
                     list[i] = uint16_t(indices[i * 2] | (indices[i * 2 + 1] << 8));

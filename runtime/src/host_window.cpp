@@ -22,6 +22,7 @@ static std::atomic<HWND> g_hwnd;
 static std::atomic<uint32_t> g_resizeW, g_resizeH;
 static bool g_mouseLook;   // capture the cursor and feed raw motion to the right stick
 static bool g_cursorHeld;  // cursor hidden and clipped to the client area now
+static std::atomic<bool> g_dumpKeyRequest{ false }; // F8 (SCDA_DEBUG_KEYS): dump the next frame
 
 // Mouse look while the window is in the foreground: the cursor is hidden and kept inside the
 // client area; Alt+Tab (focus loss) releases it.
@@ -53,8 +54,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HoldCursor(hwnd, !open && GetForegroundWindow() == hwnd);
         return 0;
     }
-    // SCDA_DEBUG_KEYS=1: F9 occlusion queries all visible, F11 culling off (F10 is a system key) (draw_state.h), toggled live.
+    // SCDA_DEBUG_KEYS=1: F9 occlusion queries all visible, F11 culling off (F10 is a system key) (draw_state.h), toggled live;
+    // F8 dumps the next frame (scda_frame_<n>.bmp; with SCDA_TRACE_DUMPED=1 also its full draw trace).
     static const bool debugKeys = getenv("SCDA_DEBUG_KEYS") != nullptr;
+    if (debugKeys && msg == WM_KEYDOWN && !(lp & (1 << 30)) && wp == VK_F8)
+    {
+        g_dumpKeyRequest = true;
+        RuntimeLog("[debug] F8: dumping the next frame\n");
+        return 0;
+    }
     if (debugKeys && msg == WM_KEYDOWN && !(lp & (1 << 30)) && (wp == VK_F9 || wp == VK_F11))
     {
         std::atomic<bool>& flag = wp == VK_F9 ? g_debugQueriesVisible : g_debugNoCull;
@@ -256,7 +264,7 @@ static void RenderThread(DisplaySettings s)
         static size_t nextDump = 0;
         // Partial Frames of the dumped guest frame arm the dump too (their resolves and draws feed
         // SCDA_DUMP_RESOLVES / SCDA_DUMP_DRAWS); the image is written by the rest of the frame.
-        bool dumping = nextDump < dumpFrames.size() && frame.stats.frame >= dumpFrames[nextDump];
+        bool dumping = (nextDump < dumpFrames.size() && frame.stats.frame >= dumpFrames[nextDump]) || g_dumpKeyRequest;
         if (dumping)
         {
             renderer.DumpNextFrame("scda_frame_" + std::to_string(frame.stats.frame) + ".bmp");
@@ -264,6 +272,8 @@ static void RenderThread(DisplaySettings s)
             static const bool backBuffer = getenv("SCDA_DUMP_BACKBUFFER") != nullptr;
             if (backBuffer && !frame.partial)
                 renderer.DumpNextBackBuffer("scda_window_" + std::to_string(frame.stats.frame) + ".bmp");
+            if (!frame.partial)
+                g_dumpKeyRequest = false;
             if (!frame.partial)
                 while (nextDump < dumpFrames.size() && dumpFrames[nextDump] <= frame.stats.frame)
                     nextDump++;
