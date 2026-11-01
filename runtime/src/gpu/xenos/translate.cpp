@@ -34,6 +34,8 @@ cbuffer SharedConstants : register(b2)
     float g_PointSize;       // constant point sprite diameter (guest pixels)
     uint g_PointMinMax;      // PA_SU_POINT_MINMAX raw
     uint4 g_TexSwizzle[8];   // per fetch slot: 0 = none, else 0x1000 | fetch swizzle (resolve copies)
+    float4 g_Ucp[6];         // user clip planes PA_CL_UCP_0..5 (guest clip space)
+    uint g_UcpEnable;        // bit n: plane n clips (PA_CL_CLIP_CNTL bits 0-5)
 };
 // Fetch-constant swizzle for textures bound raw (resolve copies): 0-3 = X-W, 4 = 0, 5 = 1.
 float4 TexSwizzle(float4 v, uint t)
@@ -72,8 +74,10 @@ float XenosAlphaTest(float a)
 // Xenos viewport transform (PA_CL_VTE_CNTL: bits 0-5 scale/offset enables, 8 xy not divided
 // by w, 9 z not divided, 10 exported w is W itself; clear = it already holds 1/W), then window
 // pixels -> host clip space (y down).
+static float4 s_GuestPos = 0.0; // exported position before the transform (user clip planes, VS main wrapper)
 float4 XenosViewport(float4 p)
 {
+    s_GuestPos = p;
     uint vte = g_Vte;
     float invW = (vte & 0x400) ? (p.w != 0.0 ? 1.0 / p.w : 1.0) : p.w;
     float w = invW != 0.0 ? 1.0 / invW : 1.0;
@@ -295,6 +299,28 @@ TranslateResult TranslateShader(const ShaderBlob& blob)
         return r;
     }
     r.hlsl = std::move(rec.out);
+    if (blob.type == ShaderType::Vertex)
+    {
+        // Wrap main: user clip planes (PA_CL_UCP) as clip distances of the exported position, e.g.
+        // the water reflection/refraction passes (plane 0) that must not show what lies past the surface.
+        size_t at = r.hlsl.find("void main(");
+        if (at != std::string::npos)
+        {
+            r.hlsl.replace(at, 10, "void xenos_main(");
+            r.hlsl += R"HLSL(
+void main(in uint iVertexId : SV_VertexID, out float4 oPos : SV_Position, out float4 oT[16] : TEXCOORD0, out float4 oPts : POINTSIZE,
+    out float4 oClip0 : SV_ClipDistance0, out float2 oClip1 : SV_ClipDistance1)
+{
+    xenos_main(iVertexId, oPos, oT, oPts);
+    float d[6];
+    [unroll] for (uint i = 0; i < 6; i++)
+        d[i] = (g_UcpEnable >> i) & 1 ? dot(s_GuestPos, g_Ucp[i]) : 0.0;
+    oClip0 = float4(d[0], d[1], d[2], d[3]);
+    oClip1 = float2(d[4], d[5]);
+}
+)HLSL";
+        }
+    }
     if (blob.type == ShaderType::Pixel)
     {
         // Wrap main: clamp outputs bound to 7e3 targets (the host target is FP16).

@@ -266,6 +266,8 @@ struct V
     float4 pos : SV_Position;
     float4 t[16] : TEXCOORD0;
     float4 psize : POINTSIZE;
+    float4 clip0 : SV_ClipDistance0;
+    float2 clip1 : SV_ClipDistance1;
 };
 [maxvertexcount(4)]
 void main(triangle V v[3], inout TriangleStream<V> s)
@@ -278,6 +280,8 @@ void main(triangle V v[3], inout TriangleStream<V> s)
     [unroll] for (int i = 0; i < 16; i++)
         vd.t[i] = va.t[i] + vb.t[i] - vc.t[i];
     vd.psize = va.psize;
+    vd.clip0 = va.clip0 + vb.clip0 - vc.clip0;
+    vd.clip1 = va.clip1 + vb.clip1 - vc.clip1;
     s.Append(vc);
     s.Append(va);
     s.Append(vb);
@@ -294,6 +298,8 @@ struct V
     float4 pos : SV_Position;
     float4 t[16] : TEXCOORD0;
     float4 psize : POINTSIZE;
+    float4 clip0 : SV_ClipDistance0;
+    float2 clip1 : SV_ClipDistance1;
 };
 cbuffer SharedTail : register(b2)
 {
@@ -1799,6 +1805,10 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             m_lastDrawn + m_lastSkipped, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
             r.regs[kRegRbColorInfo], r.regs[0x2201], r.regs[0x2104], r.regs[0x2200], r.regs[kRegRbDepthInfo], r.regs[0x2206], r.regs[0x2113],
             r.regs[0x2114], r.regs[0x2080], r.regs[0x2205], r.regs[0x2204], r.regs[0x2202], r.regs[0x210E], d.indexBase, d.indexCount, used.c_str());
+        for (uint32_t i = 0; i < 6; i++) // PA_CL_UCP_i_X..W (0x2388 + 4i) of each enabled user clip plane
+            if ((r.regs[0x2204] >> i) & 1)
+                RuntimeLog("[rtrace]   ucp%u %g %g %g %g\n", i, std::bit_cast<float>(r.regs[0x2388 + i * 4]), std::bit_cast<float>(r.regs[0x2389 + i * 4]),
+                    std::bit_cast<float>(r.regs[0x238A + i * 4]), std::bit_cast<float>(r.regs[0x238B + i * 4]));
         // SCDA_TRACE_VSC=<vs hash hex>[,..]: draws with one of those VS also log VS c8-c17 (transforms).
         static const std::vector<uint64_t> traceVscList = []
         {
@@ -1831,7 +1841,8 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         if (tracePs)
         {
             auto pf = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + 1024 + 255 * 4 + i]); };
-            RuntimeLog("[rtrace]   ps c255 %g %g %g %g\n", pf(0), pf(1), pf(2), pf(3));
+            RuntimeLog("[rtrace]   ps c255 %g %g %g %g loops 28-31 %08X %08X %08X %08X\n", pf(0), pf(1), pf(2), pf(3),
+                r.regs[kRegLoopConstants + 28], r.regs[kRegLoopConstants + 29], r.regs[kRegLoopConstants + 30], r.regs[kRegLoopConstants + 31]);
             RuntimeLog("[rtrace]   bools %08X %08X %08X %08X %08X %08X %08X %08X\n", r.regs[kRegBoolConstants], r.regs[kRegBoolConstants + 1],
                 r.regs[kRegBoolConstants + 2], r.regs[kRegBoolConstants + 3], r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
                 r.regs[kRegBoolConstants + 6], r.regs[kRegBoolConstants + 7]);
@@ -2506,9 +2517,9 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
     DrawResources& r = *m_draw;
     ColorTarget* source = ColorTargetFor(m_device, m_context, r, EdramColorKey(res.colorInfo, res.surfaceInfo));
     if (TraceResolveFrame(m_presented))
-        RuntimeLog("[rtrace] resolve @draw %u ctrl %08X src %08X surf %08X -> dest %08X fmt %u %ux%u rect %d %d %d %d\n", res.drawIndex, res.copyControl,
+        RuntimeLog("[rtrace] resolve @draw %u ctrl %08X src %08X surf %08X -> dest %08X fmt %u %ux%u rect %d %d %d %d info %08X\n", res.drawIndex, res.copyControl,
             res.colorInfo, res.surfaceInfo, res.destBase, (res.destInfo >> 7) & 0x3F, ResolveWidth(res), ResolveHeight(res), res.rect[0], res.rect[1],
-            res.rect[2], res.rect[3]);
+            res.rect[2], res.rect[3], res.destInfo);
     // shortcut: depth-source resolves copy nothing (the destination keeps its last copy, if any).
     if (ResolveCopies(res) && source && !ResolveFromDepth(res))
     {

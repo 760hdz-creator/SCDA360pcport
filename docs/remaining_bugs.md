@@ -202,12 +202,25 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Needs:** reverse-engineering the title's UnrealScript menu pages (UE2.5 GUI in `game/System` packages) to add
   an item and route its selection to the overlay. Not started.
 
-## P2. Fog and light shafts differ slightly from the console
+## FIXED. Sky under the ice smeared with underwater shapes (2026-11-01)
 
-- **Symptom:** small brightness differences in fog and light shafts (Iceland Osprey bay, Okhotsk ice-hole edge).
-- **Evidence:** `_run/census/` against `_run/ref/ref.mp4`.
-- **Suspected cause:** Xenos clamps each blend write; Direct3D 11 does not (FP16 targets reach alpha 2-8).
-- **Status:** open, low priority.
+- **Symptom:** Iceland dive, looking up at the ice hole: dark smears over the sky and clouds.
+- **Cause:** the water's above-surface view (640x360 target 10010410, resolved to 12116000) is drawn with user clip
+  plane 0 (`PA_CL_CLIP_CNTL` bit 0, plane at `PA_CL_UCP_0` 0x2388). We ignored user clip planes, so Sam and the
+  underwater geometry were drawn into it. The VS wrapper now writes `SV_ClipDistance0/1` = dot(exported position,
+  plane) for enabled planes (none with clip_disable), as Xenia does. Translator v22. `SCDA_NO_UCP=1` = old.
+- **Evidence:** `_run/fog/` (`res_ab.png` the texture, `up_zoom.png` the view, `ref_zoom.png` ref 172.5/175.5 s).
+
+## P3. Fog and light shafts: no confirmed difference left
+
+- **Checked 2026-11-01:** Iceland light shaft frame 2300 vs ref. The earlier "too bright" match was a timing
+  mismatch: ref 171 s is as blown out as ours (luma p90 230 vs 238, 4% clipped in both). Shaft pixel traced per draw
+  (`SCDA_PIXEL_WATCH`): scene 0.52, then the game's own post adds 0.5 x scene and 0.5 x a 20-tap radial blur (PS
+  7b395466, c255 = 0.0625/0/0.987, i31 = 20) -> 1.0. Faithful to the ucode. Ref is slightly more cyan (mean G-R 18 vs
+  10): not separated from capture tint (no HUD calibration done).
+- **Blend clamp theory struck for this scene:** no blend in it reads destination alpha, so FP16 alpha > 1 never
+  reaches colour. Left: 7e3 precision (7-bit mantissa) vs FP16 for faint layers; would need programmable blending.
+- **Status:** open only if a side-by-side at an aligned moment shows a difference.
 
 ## P3. Scale 2+ edge row/column and faint line at a tile split
 

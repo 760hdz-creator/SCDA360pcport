@@ -65,6 +65,14 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
     // the VS exports no size; PA_SU_POINT_MINMAX (min 0-15, max 16-31, same units) clamps it.
     c.pointSize = float(r[0x2280] >> 16) / 8.0f;
     c.pointMinMax = r[0x2281];
+    // PA_CL_CLIP_CNTL (0x2204): ucp_ena_0..5 in bits 0-5, all off with clip_disable (bit 16), as Xenia.
+    // Planes PA_CL_UCP_0_X.. at 0x2388, 4 floats each. ucp_cull_only_ena (bit 17) is treated as clip.
+    // SCDA_NO_UCP=1 turns them off (A/B).
+    static const bool noUcp = getenv("SCDA_NO_UCP") != nullptr;
+    c.ucpEnable = noUcp || ((r[0x2204] >> 16) & 1) ? 0 : r[0x2204] & 0x3F;
+    for (uint32_t i = 0; i < 6; i++)
+        for (uint32_t k = 0; k < 4; k++)
+            c.ucp[i][k] = std::bit_cast<float>(r[0x2388 + i * 4 + k]);
     // PA_SC_WINDOW_OFFSET (15-bit signed x, y) applies when PA_SU_SC_MODE_CNTL bit 16 is set.
     if (r[0x2205] & (1u << 16))
     {

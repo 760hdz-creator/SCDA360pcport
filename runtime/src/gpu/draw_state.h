@@ -39,8 +39,14 @@ struct SharedConstants
     // Per fetch slot: 0 = texels already swizzled (CPU-converted textures), else 0x1000 | the fetch
     // constant's 12-bit swizzle, applied in the shader (resolve copies are bound raw).
     uint32_t texSwizzle[32];
+    // User clip planes PA_CL_UCP_0..5 (guest clip space) and the enabled ones (PA_CL_CLIP_CNTL bits
+    // 0-5, none when clip_disable): the VS writes dot(position, plane) to SV_ClipDistance.
+    float ucp[6][4];
+    uint32_t ucpEnable;
+    uint32_t ucpPad[3];
 };
-static_assert(sizeof(SharedConstants) == 1152 && sizeof(SharedConstants) % 16 == 0);
+static_assert(sizeof(SharedConstants) == 1264 && sizeof(SharedConstants) % 16 == 0);
+static_assert(offsetof(SharedConstants, ucp) == 1152 && offsetof(SharedConstants, ucpEnable) == 1248);
 static_assert(offsetof(SharedConstants, fetch) == 160 && offsetof(SharedConstants, specConstants) == 928);
 static_assert(offsetof(SharedConstants, vte) == 944 && offsetof(SharedConstants, vpOffset) == 960);
 
