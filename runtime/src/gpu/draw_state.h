@@ -96,6 +96,12 @@ uint32_t TextureElementBytes(uint32_t format);
 // Guest bytes the texture occupies (tiled: 32x32 elements aligned).
 uint32_t TextureGuestBytes(const TextureFetch& t);
 uint32_t TextureCubeFaceBytes(const TextureFetch& t); // stride between the 6 faces of a cube texture
+// 3D textures (dimension 2): byte offset of element (x, y, z) when tiled (Xenia Tiled3D), guest
+// bytes of the whole volume, and slice z de-tiled into `linear` as a plain 2D fetch for
+// ConvertTexture / ConvertTextureFloat (with linear.data() as guest bytes).
+uint64_t Tiled3DOffset(uint32_t x, uint32_t y, uint32_t z, uint32_t pitchAligned, uint32_t heightAligned, uint32_t log2Bpp);
+uint32_t Texture3DGuestBytes(const TextureFetch& t);
+TextureFetch Texture3DSlice(const TextureFetch& t, const uint8_t* guest, uint32_t z, std::vector<uint8_t>& linear);
 // Texel index of (x, y) in a tiled surface of the given pitch (texels).
 uint32_t TiledTexelIndex(uint32_t x, uint32_t y, uint32_t pitch, uint32_t log2Bpp);
 // Live A/B switches for bugs only reproducible in play (SCDA_DEBUG_KEYS=1: F9 / F11 in the game window; SCDA_QUERY_ALL_VISIBLE=1 / SCDA_NO_CULL=1 at start).

@@ -418,6 +418,7 @@ struct DrawResources
         uint64_t checkedAt = ~0ull;
     };
     std::unordered_map<uint64_t, CubeEntry> cubes;
+    std::unordered_map<uint64_t, CubeEntry> volumes; // 3D textures (dimension 2), same scheme
     // Converted textures across frames by fetch constant, reused while the guest bytes hash the same.
     struct CachedTexture
     {
@@ -776,6 +777,74 @@ static ID3D11ShaderResourceView* CubeView(ID3D11Device* device, ID3D11DeviceCont
     static const bool trace = getenv("SCDA_TRACE_CUBE") != nullptr;
     if (trace)
         RuntimeLog("[cube] %08X fmt %u %ux%u tiled %d face stride %u (re)made\n", t.physical, t.format, t.width, t.height, t.tiled, faceBytes);
+    e.srv = srv;
+    e.hash = hash;
+    return e.srv.Get();
+}
+
+// The Texture3D for a 3D fetch constant (dimension 2): slices de-tiled (Texture3DSlice), level 0
+// only. Hashed once per present like cubes.
+static ID3D11ShaderResourceView* VolumeView(ID3D11Device* device, DrawResources& r, const RegisterFile& regs,
+    uint32_t slot, const TextureFetch& t, uint64_t presented)
+{
+    if (!TextureElementBytes(t.format) || !t.width || !t.height || !t.depth)
+        return nullptr;
+    uint64_t key = 0x3D3Dull;
+    for (uint32_t i = 0; i < 6; i++)
+        key = (key ^ regs[kRegFetchConstants + slot * 6 + i]) * 1099511628211ull;
+    auto& e = r.volumes[key];
+    if (e.srv && e.checkedAt == presented)
+        return e.srv.Get();
+    const uint32_t bytes = Texture3DGuestBytes(t);
+    const uint8_t* guest = PhysicalPtr(t.physical);
+    if (!bytes || !GuestRangeReadable(guest, bytes))
+        return e.srv.Get();
+    const uint64_t hash = HashBytes(guest, bytes);
+    e.checkedAt = presented;
+    if (e.srv && e.hash == hash)
+        return e.srv.Get();
+    const bool isFloat = IsFloatTextureFormat(t.format);
+    const size_t texelBytes = isFloat ? 16 : 4, sliceBytes = size_t(t.width) * t.height * texelBytes;
+    std::vector<uint8_t> volume(sliceBytes * t.depth), linear;
+    for (uint32_t z = 0; z < t.depth; z++)
+    {
+        const TextureFetch s = Texture3DSlice(t, guest, z, linear);
+        uint8_t* dst = volume.data() + z * sliceBytes;
+        if (isFloat)
+        {
+            const std::vector<float> texels = ConvertTextureFloat(s, linear.data());
+            memcpy(dst, texels.data(), std::min(texels.size() * 4, sliceBytes));
+            continue;
+        }
+        const std::vector<uint32_t> texels = ConvertTexture(s, linear.data());
+        memcpy(dst, texels.data(), std::min(texels.size() * 4, sliceBytes));
+        // SCDA_DUMP_TEXTURES also writes each 3D slice once: <physical>_<format>_<w>x<h>_z<n>.bmp.
+        static const char* dumpDir = getenv("SCDA_DUMP_TEXTURES");
+        static std::unordered_set<uint64_t> dumpedSlices;
+        if (dumpDir && dumpedSlices.insert(uint64_t(t.physical) << 10 | z).second && dumpedSlices.size() < 600)
+        {
+            char name[96];
+            snprintf(name, sizeof(name), "\\%08X_%u_%ux%u_z%u.bmp", t.physical, t.format, t.width, t.height, z);
+            WriteBmp(dumpDir + std::string(name), texels, t.width, t.height);
+        }
+    }
+    D3D11_TEXTURE3D_DESC td{};
+    td.Width = t.width;
+    td.Height = t.height;
+    td.Depth = t.depth;
+    td.MipLevels = 1;
+    td.Format = isFloat ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA init{ volume.data(), UINT(t.width * texelBytes), UINT(sliceBytes) };
+    ComPtr<ID3D11Texture3D> tex;
+    ComPtr<ID3D11ShaderResourceView> srv;
+    if (FAILED(device->CreateTexture3D(&td, &init, &tex)) || FAILED(device->CreateShaderResourceView(tex.Get(), nullptr, &srv)))
+        return e.srv.Get();
+    static const bool trace = getenv("SCDA_TRACE_CUBE") != nullptr;
+    if (trace)
+        RuntimeLog("[tex3d] %08X fmt %u %ux%ux%u tiled %d pitch %u guest bytes %u (re)made\n", t.physical, t.format, t.width, t.height,
+            t.depth, t.tiled, t.pitch, bytes);
     e.srv = srv;
     e.hash = hash;
     return e.srv.Get();
@@ -1210,6 +1279,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     // known here), converted on the CPU once per frame.
     ID3D11ShaderResourceView* srvs[32];
     ID3D11ShaderResourceView* cubeSrvs[32] = {};
+    ID3D11ShaderResourceView* volumeSrvs[32] = {};
     for (uint32_t slot = 0; slot < 32; slot++)
     {
         srvs[slot] = r.white.Get();
@@ -1224,8 +1294,16 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         static const bool noCube = getenv("SCDA_NO_CUBE") != nullptr;
         static const bool trace3D = getenv("SCDA_TRACE_CUBE") != nullptr;
         static std::unordered_set<uint32_t> seen3D;
+        // 3D textures (dimension 2) bind at g_Tex3D (t32+); before, every true 3D fetch read 0
+        // (EMF vision's electronics glow). SCDA_NO_TEX3D=1: old behaviour (A/B).
+        static const bool no3D = getenv("SCDA_NO_TEX3D") != nullptr;
         if (trace3D && t.dimension == 2 && seen3D.insert(t.physical).second)
-            RuntimeLog("[tex3d] %08X fmt %u %ux%ux%u tiled %d (not bound)\n", t.physical, t.format, t.width, t.height, t.depth, t.tiled);
+            RuntimeLog("[tex3d] %08X fmt %u %ux%ux%u tiled %d%s\n", t.physical, t.format, t.width, t.height, t.depth, t.tiled, no3D ? " (not bound)" : "");
+        if (t.dimension == 2 && !no3D)
+        {
+            volumeSrvs[slot] = VolumeView(m_device, r, regs, slot, t, m_presented);
+            continue;
+        }
         if (t.dimension == 3 && !noCube)
         {
             cubeSrvs[slot] = CubeView(m_device, m_context, r, regs, slot, t, m_presented);
@@ -1517,6 +1595,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     for (auto set : { &ID3D11DeviceContext::VSSetShaderResources, &ID3D11DeviceContext::PSSetShaderResources })
     {
         (m_context->*set)(kHlslTex2DSlot, 32, srvs);
+        (m_context->*set)(kHlslTex2DSlot + 32, 32, volumeSrvs);
         (m_context->*set)(kHlslTex2DSlot + 64, 32, cubeSrvs);
     }
 

@@ -95,6 +95,41 @@ TEST(texture_fetch_decode_menu_constant)
     CHECK(!DecodeTextureFetch(r, 1).valid);
 }
 
+// 3D fetch (dimension 2): size_3d fields (11/11/10 bits); the EMF volume read as 6176x3592 under
+// the 2D fields. Tiled offsets of a 32x32x8 volume are distinct, element-aligned and inside the
+// guest byte count; slice 1 de-tiles to the bytes at its own offsets.
+TEST(texture_3d_fetch_and_tiling)
+{
+    RegisterFile r;
+    const uint32_t c[6] = { 0x80000002 | (1u << 22), 0x0371A006, 0x01C0F81F, 0, 0, 2u << 9 };
+    for (uint32_t i = 0; i < 6; i++)
+        r.Set(kRegFetchConstants + i, c[i]);
+    const TextureFetch t = DecodeTextureFetch(r, 0);
+    CHECK_EQ(t.dimension, 2u);
+    CHECK_EQ(t.width, 32u);
+    CHECK_EQ(t.height, 32u);
+    CHECK_EQ(t.depth, 8u);
+    const uint32_t bytes = Texture3DGuestBytes(t);
+    std::set<uint64_t> seen;
+    for (uint32_t z = 0; z < 8; z++)
+        for (uint32_t y = 0; y < 32; y++)
+            for (uint32_t x = 0; x < 32; x++)
+            {
+                const uint64_t o = Tiled3DOffset(x, y, z, 32, 32, 2);
+                CHECK(o % 4 == 0 && o + 4 <= bytes);
+                seen.insert(o);
+            }
+    CHECK_EQ(seen.size(), size_t(32 * 32 * 8));
+    std::vector<uint8_t> guest(bytes);
+    for (size_t i = 0; i < guest.size(); i++)
+        guest[i] = uint8_t(i * 7 + (i >> 8));
+    std::vector<uint8_t> linear;
+    const TextureFetch s = Texture3DSlice(t, guest.data(), 1, linear);
+    CHECK(!s.tiled && s.dimension == 1 && s.pitch == 32);
+    CHECK_EQ(linear.size(), size_t(32 * 32 * 4));
+    CHECK(memcmp(&linear[(5 * 32 + 9) * 4], &guest[Tiled3DOffset(9, 5, 1, 32, 32, 2)], 4) == 0);
+}
+
 TEST(convert_texture_argb_swizzle)
 {
     // Guest big-endian ARGB dwords; 8-in-32 swap + zyxw swizzle gives RGBA.

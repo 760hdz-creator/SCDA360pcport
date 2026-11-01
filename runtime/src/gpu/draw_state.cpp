@@ -249,6 +249,15 @@ TextureFetch DecodeTextureFetch(const RegisterFile& r, uint32_t slot)
     t.stacked = (c1 >> 10) & 1;
     t.depth = ((c2 >> 26) & 0x3F) + 1;
     t.dimension = (c5 >> 9) & 3;
+    // 3D textures (dimension 2): size_3d is width 11 bits, height 11 bits, depth 10 bits (Xenia).
+    if (t.dimension == 2)
+    {
+        t.width = (c2 & 0x7FF) + 1;
+        t.height = ((c2 >> 11) & 0x7FF) + 1;
+        t.depth = ((c2 >> 22) & 0x3FF) + 1;
+        if (!((c0 >> 22) & 0x1FF))
+            t.pitch = t.width;
+    }
     t.packedMips = (c5 >> 11) & 1;
     t.mipPhysical = (c5 & 0xFFFFF000) & 0x1FFFFFFF;
     if (t.mipPhysical)
@@ -347,6 +356,68 @@ uint32_t TiledTexelIndex(uint32_t x, uint32_t y, uint32_t pitch, uint32_t log2Bp
     uint32_t bytes = ((offset & ~511u) << 3) + ((offset & 448u) << 2) + (offset & 63u) + ((y & 16) << 7) +
                      ((((y & 8) >> 2) + (x >> 3)) & 3u) * 64;
     return bytes >> log2Bpp;
+}
+
+// Byte offset of element (x, y, z) in a tiled 3D texture: Xenia texture_address::Tiled3D
+// (BSD-licensed, xenia-project/xenia). Macro tiles 32x16x4 elements; pitch/height 32-aligned.
+uint64_t Tiled3DOffset(uint32_t x, uint32_t y, uint32_t z, uint32_t pitchAligned, uint32_t heightAligned, uint32_t log2Bpp)
+{
+    const uint64_t outer = ((uint64_t(z >> 2) * (heightAligned >> 4) + (y >> 4)) * (pitchAligned >> 5) + (x >> 5)) << 7;
+    const uint64_t inner = ((z & 3) << 5) | (((y >> 1) & 3) << 3) | (x & 7);
+    const uint64_t oi = (outer | inner) << log2Bpp;
+    const uint64_t bank = ((y >> 3) ^ (z >> 2)) & 1;
+    const uint64_t pipe = ((x >> 3) & 3) ^ (bank << 1);
+    return ((y & 1) << 4) | (pipe << 6) | (bank << 11) | (oi & 15) | (((oi >> 4) & 1) << 5) | (((oi >> 5) & 7) << 8) | (oi >> 8 << 12);
+}
+
+// Element grid of a 3D texture's storage: 32-aligned pitch and slice rows (tiled and linear alike).
+static void Grid3D(const TextureFetch& t, uint32_t& pitch, uint32_t& rows)
+{
+    ElementGrid(t, pitch, rows);
+    pitch = Align32(pitch), rows = Align32(rows);
+}
+
+uint32_t Texture3DGuestBytes(const TextureFetch& t)
+{
+    const uint32_t bytes = TextureElementBytes(t.format);
+    uint32_t pitch, rows, w, h;
+    Grid3D(t, pitch, rows);
+    ElementGrid(t, w, h);
+    w = std::min(w, pitch);
+    if (!bytes || !t.depth)
+        return 0;
+    if (!t.tiled)
+        return uint32_t(std::min<uint64_t>(uint64_t(pitch) * rows * bytes * t.depth, 0xFFFFFFFFull));
+    // Highest element offset over the last 4-slice x 32-row band (addresses grow with z/4 and y/32).
+    uint64_t last = 0;
+    const uint32_t z0 = (t.depth - 1) & ~3u, y0 = rows - 32;
+    for (uint32_t z = z0; z < z0 + 4; z++)
+        for (uint32_t y = y0; y < rows; y++)
+            for (uint32_t x = 0; x < pitch; x++)
+                last = std::max(last, Tiled3DOffset(x, y, z, pitch, rows, Log2(bytes)));
+    return uint32_t(std::min<uint64_t>(last + bytes, 0xFFFFFFFFull));
+}
+
+TextureFetch Texture3DSlice(const TextureFetch& t, const uint8_t* guest, uint32_t z, std::vector<uint8_t>& linear)
+{
+    const uint32_t bytes = TextureElementBytes(t.format), log2 = Log2(bytes);
+    uint32_t pitch, rows, w, h;
+    Grid3D(t, pitch, rows);
+    ElementGrid(t, w, h);
+    linear.assign(size_t(w) * h * bytes, 0);
+    for (uint32_t y = 0; y < h; y++)
+        for (uint32_t x = 0; x < w; x++)
+        {
+            const uint64_t at = t.tiled ? Tiled3DOffset(x, y, z, pitch, rows, log2)
+                                        : ((uint64_t(z) * rows + y) * pitch + x) * bytes;
+            memcpy(&linear[(size_t(y) * w + x) * bytes], guest + at, bytes);
+        }
+    TextureFetch s = t;
+    s.dimension = 1, s.tiled = false, s.depth = 1, s.stacked = false;
+    s.pitch = IsBlockCompressed(t.format) ? w * 4 : w;
+    s.offsetX = s.offsetY = 0;
+    s.mipPhysical = 0, s.mipMaxLevel = 0;
+    return s;
 }
 
 // GPU endian modes over a little-endian loaded dword: 0 none, 1 8-in-16, 2 8-in-32, 3 16-in-32.
