@@ -7,6 +7,7 @@
 // GObjects = TArray<UObject*> at 0x82E1F994 (UObject +4 = index). Called from fov.cpp FovTick.
 #include <runtime.h>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -92,7 +93,14 @@ void Scan()
                 const uint32_t bits = GuestLoad32(l.obj + kFields[f]);
                 memcpy(&v[f], &bits, 4);
             }
-            RuntimeLog("[lightdist] %08X %s turnoff %g shadows %g..%g\n", l.obj, NameOf(l.obj).c_str(), v[0], v[1], v[2]);
+        {
+            const uint32_t md = GuestLoad32(l.obj + 0x65C), fade = GuestLoad32(l.obj + 0x5C0);
+            float maxDist, fadeIn;
+            memcpy(&maxDist, &md, 4);
+            memcpy(&fadeIn, &fade, 4);
+            RuntimeLog("[lightdist] %08X %s %s turnoff %g fade %g shadows %g..%g max %g radius %u flags %08X\n", l.obj, NameOf(l.obj).c_str(),
+                NameOf(l.cls).c_str(), v[0], fadeIn, v[1], v[2], maxDist, unsigned(*(g_base + l.obj + 0x57C)), GuestLoad32(l.obj + 0x5B8));
+        }
         }
 }
 
@@ -146,4 +154,33 @@ void LightDistanceTick(uint32_t controller)
         }
     }
     g_appliedScale = scale;
+    // SCDA_TRACE_LIGHTDIST=1: every ~10 s, lights the console cut-off (sub_826FD2E8: distance from the
+    // view to Location +0x3A4 > TurnOffDistance) would drop but the scaled distance keeps.
+    static const bool trace = getenv("SCDA_TRACE_LIGHTDIST") != nullptr;
+    if (trace && g_ticks % 600 == 300)
+    {
+        auto f32 = [](uint32_t a) {
+            const uint32_t b = GuestLoad32(a);
+            float v;
+            memcpy(&v, &b, 4);
+            return v;
+        };
+        const float cx = f32(controller + 0x3A4), cy = f32(controller + 0x3A8), cz = f32(controller + 0x3AC);
+        int kept = 0, culled = 0, gained = 0;
+        for (const LightEntry& l : g_lights)
+        {
+            const float dx = f32(l.obj + 0x3A4) - cx, dy = f32(l.obj + 0x3A8) - cy, dz = f32(l.obj + 0x3AC) - cz;
+            const float d = sqrtf(dx * dx + dy * dy + dz * dz), cut = f32(l.obj + 0x5BC), base = cut / g_appliedScale;
+            if (!(cut > 0.0f) || d <= base)
+                kept++;
+            else if (d <= cut)
+            {
+                gained++;
+                RuntimeLog("[lightdist] gained %08X %s dist %.0f console cut %.0f\n", l.obj, NameOf(l.obj).c_str(), d, base);
+            }
+            else
+                culled++;
+        }
+        RuntimeLog("[lightdist] view (%.0f,%.0f,%.0f): %d within console distance, %d gained, %d still culled\n", cx, cy, cz, kept, gained, culled);
+    }
 }
