@@ -56,13 +56,13 @@ void Scan()
     const uint32_t data = GuestLoad32(kGObjects), num = GuestLoad32(kGObjects + 4);
     if (!data || num > 4000000 || !GuestRangeReadable(g_base + data, size_t(num) * 4))
         return;
-    std::unordered_map<uint32_t, bool> pageOk; // 64 KB page -> readable (one VirtualQuery per page, not per object)
+    std::unordered_map<uint32_t, bool> pageOk; // 4 KB page -> readable (one VirtualQuery per page, not per object)
     auto readable = [&](uint32_t a, uint32_t n) {
-        for (uint32_t p = a >> 16; p <= (a + n - 1) >> 16; p++)
+        for (uint32_t p = a >> 12; p <= (a + n - 1) >> 12; p++)
         {
             auto it = pageOk.find(p);
             if (it == pageOk.end())
-                it = pageOk.emplace(p, GuestRangeReadable(g_base + (uint64_t(p) << 16), 0x10000)).first;
+                it = pageOk.emplace(p, GuestRangeReadable(g_base + (uint64_t(p) << 12), 0x1000)).first;
             if (!it->second)
                 return false;
         }
@@ -80,7 +80,7 @@ void Scan()
         g_lights.push_back(it != known.end() && it->second.cls == cls ? it->second : LightEntry{ o, cls, { 0, 0, 0 } });
     }
     static const bool trace = getenv("SCDA_TRACE_LIGHTDIST") != nullptr;
-    if (known.size() == g_lights.size() && !trace)
+    if (!known.empty() && known.size() == g_lights.size() && !trace)
         return;
     RuntimeLog("[lightdist] %zu lights, scale %g\n", g_lights.size(), double(g_scale.load()));
     if (trace)
