@@ -4,6 +4,7 @@
 // UStruct +0x40 children; UProperty +0x48 offset (high 16 bits).
 #include <runtime.h>
 #include <fov.h>
+#include "gpu/draw_state.h"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -117,8 +118,52 @@ void FovSeeObject(uint32_t obj)
 // user's value, and DesiredFOV too while it sits at a default (not zoomed). The game's own value
 // (75) writes nothing.
 // SCDA_FOV_TEST=<sam|desired|angle>:<degrees>: write that property every tick instead (diagnostic).
+void LightDistanceTick(uint32_t controller); // light_distance.cpp
+
 void FovTick()
 {
+    LightDistanceTick(g_controller);
+    // Reflection dumps, once a controller exists (finding script properties without the packages):
+    // SCDA_DUMP_NAMES=<sub>[,<sub>..] logs every GNames entry containing a substring (case-insensitive);
+    // SCDA_DUMP_PROPS=<class>[,<class>..] logs each class's own properties + byte offsets, found
+    // through GObjects (TArray<UObject*> at 0x82E1F994).
+    static const char* dumpNames = getenv("SCDA_DUMP_NAMES");
+    static const char* dumpProps = getenv("SCDA_DUMP_PROPS");
+    static bool dumped = false;
+    if ((dumpNames || dumpProps) && !dumped && g_controller)
+    {
+        dumped = true;
+        auto lower = [](std::string s) {
+            for (char& c : s)
+                c = char(tolower(uint8_t(c)));
+            return s;
+        };
+        auto matches = [](const std::string& list, const std::string& s, bool substring) {
+            for (size_t p = 0; p < list.size();)
+            {
+                const size_t e = list.find(',', p);
+                const std::string item = list.substr(p, e == std::string::npos ? std::string::npos : e - p);
+                if (!item.empty() && (substring ? s.find(item) != std::string::npos : s == item))
+                    return true;
+                p = e == std::string::npos ? list.size() : e + 1;
+            }
+            return false;
+        };
+        if (dumpNames)
+            for (uint32_t i = 0, n = GuestLoad32(0x82F284D8); i < n; i++)
+                if (const std::string name = GuestFNameOf(i); matches(lower(dumpNames), lower(name), true))
+                    RuntimeLog("[names] %u %s\n", i, name.c_str());
+        const uint32_t data = GuestLoad32(0x82E1F994), num = GuestLoad32(0x82E1F998);
+        if (dumpProps && data && num < 4000000 && GuestRangeReadable(g_base + data, size_t(num) * 4))
+            for (uint32_t i = 0; i < num; i++)
+            {
+                const uint32_t o = GuestLoad32(data + i * 4);
+                if (!o || !GuestRangeReadable(g_base + o, 0x50) || ClassName(o) != "Class" || !matches(dumpProps, NameOf(o), false))
+                    continue;
+                for (uint32_t f = GuestLoad32(o + 0x40), n = 0; f && n < 4000; f = GuestLoad32(f + 0x30), n++)
+                    RuntimeLog("[props] %s.%s %s +%X\n", NameOf(o).c_str(), NameOf(f).c_str(), ClassName(f).c_str(), GuestLoad32(f + 0x48) >> 16);
+            }
+    }
     if (!g_controller)
         return;
     static const char* test = getenv("SCDA_FOV_TEST");
