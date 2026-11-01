@@ -13,9 +13,10 @@ struct DisplaySettings
     // Quality of life, off by default (authentic): goggle vision modes without the scanline overlay
     // and without the thermal/EMF noise displacement ([Display] CleanGoggles=1).
     bool cleanGoggles = false;
-    // Opaque surfaces drawn from both sides ([Display] DrawBackFaces=1, default on): one-sided walls
-    // stay solid when the camera is inside them (Iceland shack). 0 = the console's culling.
-    bool drawBackFaces = true;
+    // Opaque surfaces drawn from both sides ([Display] DrawBackFaces=1). Default off = the console's
+    // culling: the Iceland shack holes were the BSP index-offset bug, and drawing both sides put the
+    // back of the mirror wall into the Hotel bathroom mirror's reflection pass.
+    bool drawBackFaces = false;
     // Field of view in degrees ([Display] FOV=60..110). 75 is the game's own (nothing is changed).
     uint32_t fov = 75;
     // Light / shadow draw distance multiplier ([Display] LightDistance=1..8, default 4 like the PC

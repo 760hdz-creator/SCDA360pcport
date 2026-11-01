@@ -107,7 +107,7 @@ private:
     bool m_vsync = true;
     uint32_t m_scale = 1, m_anisotropy = 1;
     bool m_cleanGoggles = false;
-    bool m_drawBackFaces = true;
+    bool m_drawBackFaces = false;
     uint64_t m_presented = 0;
     uint32_t m_lastDrawn = 0, m_lastSkipped = 0, m_lastResolved = 0;
     bool m_lastFrontbuffer = false;

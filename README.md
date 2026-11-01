@@ -44,8 +44,8 @@ stands in for the console:
   water shaders' reflections work.
 - **Shadows and dark bands.** Kinshasa's sun shadows no longer cover the whole ground, and the dark band at the bottom
   of the screen in New York and the Hotel is gone.
-- **Solid walls.** One-sided walls stay solid when the camera ends up inside them (the Iceland shack was see-through).
-  `DrawBackFaces=0` restores the console's behaviour.
+- **Solid walls.** The Iceland shack and JBA HQ walls are solid again: level polygons now use the right vertices.
+- **Mirrors.** The Hotel bathroom mirrors reflect the room again.
 - **No more black flashes** in the JBA headquarters (occlusion query results now arrive within one frame).
 - **EMF vision** samples its 3D noise texture, like the console.
 - **More fixes:** the bottom band on the sniper scope, point sprites, 1D textures and vertex formats. All 4,532
