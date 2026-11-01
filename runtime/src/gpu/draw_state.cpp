@@ -37,6 +37,21 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
         c.vpScale[i] = AsFloat(r[kRegPaClVportXScale + i * 2]);
         c.vpOffset[i] = AsFloat(r[kRegPaClVportXScale + i * 2 + 1]);
     }
+    // Sky layers drawn over the sky dome (newyork_02 moon VS d2d3127c, clouds VS d0856495): depth test,
+    // no depth write, at the far plane (reversed depth ~4e-6). Their WVP translations come from the
+    // CPU on a 1/8 fp32 grid (cancellation), so the near term jitters 1.5-2.4 per object per frame
+    // and a layer z-fights the dome: moon gone / cloud holes for single frames (the 360 is stable).
+    // Nudge non-writing, non-stencil depth tests toward passing by a fixed depth epsilon (worst
+    // measured swing 2.8e-6). SCDA_SKY_DEPTH_EPS=<value> overrides, 0 = off.
+    static const float skyDepthEps = getenv("SCDA_SKY_DEPTH_EPS") ? float(atof(getenv("SCDA_SKY_DEPTH_EPS"))) : 4e-6f;
+    const uint32_t depthControl = r[0x2200], zFunc = (depthControl >> 4) & 7;
+    if (skyDepthEps != 0.0f && (c.vte & 0x20) && (depthControl & 7) == 2)
+    {
+        if (zFunc == 4 || zFunc == 6) // GREATER / GEQUAL
+            c.vpOffset[2] += skyDepthEps;
+        else if (zFunc == 1 || zFunc == 3) // LESS / LEQUAL
+            c.vpOffset[2] -= skyDepthEps;
+    }
     c.windowToNdc[0] = 2.0f / float(rtWidth);
     c.windowToNdc[1] = 2.0f / float(rtHeight);
     // SQ_PROGRAM_CNTL (0x2180) bit 18 PARAM_GEN: the PS gets the pixel position (xy) and point sprite

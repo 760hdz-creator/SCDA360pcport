@@ -1707,6 +1707,80 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         m_lastSkipped++;
         return;
     }
+    // SCDA_WATCH_DRAW=<vs hash hex>: one cheap line per draw with that VS, every frame (timing-sensitive glitches).
+    static const std::vector<uint64_t> watchVs = []
+    {
+        std::vector<uint64_t> v;
+        for (const char* p = getenv("SCDA_WATCH_DRAW"); p && *p; p += strcspn(p, ",") + (p[strcspn(p, ",")] ? 1 : 0))
+            v.push_back(strtoull(p, nullptr, 16));
+        return v;
+    }();
+    if (std::find(watchVs.begin(), watchVs.end(), d.vs->hash) != watchVs.end())
+    {
+        uint64_t ch = 1469598103934665603ull;
+        for (uint32_t i = 0; i < 256 * 4; i++)
+            ch = (ch ^ r.regs[kRegAluConstants + i]) * 1099511628211ull;
+        std::string s;
+        char buf[160];
+        for (uint32_t c = 8; c < 14; c++)
+        {
+            snprintf(buf, sizeof(buf), " c%u(%.9g %.9g %.9g %.9g)", c, std::bit_cast<float>(r.regs[kRegAluConstants + c * 4]), std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 1]),
+                std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 2]), std::bit_cast<float>(r.regs[kRegAluConstants + c * 4 + 3]));
+            s += buf;
+        }
+        for (uint32_t mi : d.memory)
+            if (mi < frame.memory.size())
+            {
+                const auto& snap = frame.memory[mi];
+                uint64_t h = 1469598103934665603ull;
+                for (uint8_t b : snap.bytes)
+                    h = (h ^ b) * 1099511628211ull;
+                snprintf(buf, sizeof(buf), " snap %08X+%u h%016llx", uint32_t(snap.key >> 32), uint32_t(snap.key), (unsigned long long)h);
+                s += buf;
+                // SCDA_WATCH_DUMP=1: also write each distinct snapshot (+ index buffer) to watch_<addr>_<hash>.bin/.idx.
+                static const bool watchDump = getenv("SCDA_WATCH_DUMP") != nullptr;
+                static std::unordered_set<uint64_t> dumpedSnaps;
+                if (watchDump && dumpedSnaps.insert(h).second && dumpedSnaps.size() < 16)
+                {
+                    char name[64];
+                    snprintf(name, sizeof(name), "watch_%08X_%016llx.bin", uint32_t(snap.key >> 32), (unsigned long long)h);
+                    if (FILE* f = fopen(name, "wb"))
+                    {
+                        fwrite(snap.bytes.data(), 1, snap.bytes.size(), f);
+                        fclose(f);
+                    }
+                    if (d.indexSnapshot >= 0 && size_t(d.indexSnapshot) < frame.memory.size())
+                    {
+                        snprintf(name, sizeof(name), "watch_%08X_%016llx.idx", uint32_t(snap.key >> 32), (unsigned long long)h);
+                        if (FILE* f = fopen(name, "wb"))
+                        {
+                            fwrite(frame.memory[d.indexSnapshot].bytes.data(), 1, frame.memory[d.indexSnapshot].bytes.size(), f);
+                            fclose(f);
+                        }
+                    }
+                }
+                if (d.indexCount == 4)
+                    for (uint32_t v = 0; (v + 1) * 28 <= snap.bytes.size() && v < 4; v++)
+                    {
+                        float xyz[3];
+                        for (uint32_t k = 0; k < 3; k++)
+                        {
+                            uint32_t w;
+                            memcpy(&w, &snap.bytes[v * 28 + k * 4], 4);
+                            xyz[k] = std::bit_cast<float>(_byteswap_ulong(w));
+                        }
+                        snprintf(buf, sizeof(buf), " v(%.9g %.9g %.9g)", xyz[0], xyz[1], xyz[2]);
+                        s += buf;
+                    }
+            }
+        for (uint32_t t = 0; t < 8; t++)
+        {
+            snprintf(buf, sizeof(buf), " t%u %08X/%08X", t, r.regs[kRegFetchConstants + t * 6 + 1], r.regs[kRegFetchConstants + t * 6 + 2]);
+            s += buf;
+        }
+        snprintf(buf, sizeof(buf), " vs %08llx z %08X wo %08X sc %08X/%08X part %d ps0 %g %g %g %g", (unsigned long long)(d.vs->hash >> 32), r.regs[0x2200], r.regs[0x2080], r.regs[0x2081], r.regs[0x2082], int(frame.partial),std::bit_cast<float>(r.regs[kRegAluConstants + 1024]), std::bit_cast<float>(r.regs[kRegAluConstants + 1025]), std::bit_cast<float>(r.regs[kRegAluConstants + 1026]), std::bit_cast<float>(r.regs[kRegAluConstants + 1027]));
+        RuntimeLog("[watch] frame %llu present %llu draw %u n %u ib %08X consts %016llx%s%s\n", (unsigned long long)frame.stats.frame, m_presented,m_lastDrawn + m_lastSkipped, d.indexCount, d.indexBase, (unsigned long long)ch, s.c_str(), buf);
+    }
     if (TraceResolveFrame(m_presented))
     {
         // Texture slots the PS samples: s<n>_Texture*DescriptorIndex uses outside the #define header.
