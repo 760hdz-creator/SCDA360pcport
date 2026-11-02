@@ -166,6 +166,8 @@ Roughly in this order:
 
 1. Download `SCDA_Setup.exe` from the [latest release](https://github.com/8gramlabs/SCDA360pcport/releases/latest)
    (or build it yourself, see below).
+   The installer isn't code-signed, so Windows or your antivirus may warn about it. If Windows says "Windows
+   protected your PC", click **More info**, then **Run anyway**.
 2. Run `SCDA_Setup.exe`, pick your disc image (`.iso`) and a folder to install to. It checks that your disc is the
    right one and copies the game files into `<folder>\game`.
 3. Start `scda.exe` from that folder.
