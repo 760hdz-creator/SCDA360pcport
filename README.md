@@ -15,8 +15,13 @@
 
 > [!NOTE]
 > **You can play the whole game.** Every mission loads, plays and saves, and missions lead into each other like on
-> the console. What's left is polish: playing the story start to finish to catch the last visual bugs, and putting
-> out a ready-made installer. Until then you have to build it yourself.
+> the console. The installer is out: get `SCDA_Setup.exe` from the
+> [latest release](https://github.com/8gramlabs/SCDA360pcport/releases/latest).
+
+> [!WARNING]
+> **This build still has visual bugs.** I fix as many as I can, but fixing one sometimes brings out a new one. The
+> game is fully playable with them. If you see one, please [report it](#reporting-bugs) with screenshots or a video
+> and your log file.
 
 ---
 
@@ -136,13 +141,22 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 - Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
   show up about a third of the way down the screen.
 
+## Reporting bugs
+
+Open an [issue](https://github.com/8gramlabs/SCDA360pcport/issues) and include:
+
+- **Screenshots or a short video** of the bug.
+- **Where it happened**: the mission and the area.
+- **Your log file**: `scda.log` in your install folder, next to `scda.exe`. It's replaced every time you start the
+  game, so copy it right after the bug happens.
+- Your `%LOCALAPPDATA%\SCDARecomp\settings.ini`, if you changed any settings.
+
 ## Coming next
 
 Roughly in this order:
 
 1. **Play the whole story by hand**, start to finish, and fix what turns up.
-2. **A ready-made installer** for people who don't want to build it themselves. This will be the first release.
-3. **Ultrawide and more PC options**, once the graphics are settled.
+2. **Ultrawide and more PC options**, once the graphics are settled.
 
 ## How to play
 
@@ -150,7 +164,8 @@ Roughly in this order:
 > **No game files come with this project.** You need your own copy of *Splinter Cell: Double Agent* for Xbox 360.
 > It's made for the **USA, Europe** disc (as an `.iso` file). Other versions won't work.
 
-1. Build the program and the installer (`tools/installer/build.bat`). There's no download yet.
+1. Download `SCDA_Setup.exe` from the [latest release](https://github.com/8gramlabs/SCDA360pcport/releases/latest)
+   (or build it yourself, see below).
 2. Run `SCDA_Setup.exe`, pick your disc image (`.iso`) and a folder to install to. It checks that your disc is the
    right one and copies the game files into `<folder>\game`.
 3. Start `scda.exe` from that folder.
