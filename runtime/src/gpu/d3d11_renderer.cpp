@@ -19,6 +19,16 @@
 #include <gpu_state.h>
 #include <runtime.h>
 
+namespace
+{
+// SCDA_CB_STATS counters (render thread only).
+struct CbStats
+{
+    unsigned long long aluBinds[2], aluUploads[2], sharedBinds, sharedUploads;
+};
+CbStats g_cbStats{};
+}
+
 using Microsoft::WRL::ComPtr;
 
 template <class T> static void Release(T*& p)
@@ -449,6 +459,19 @@ struct DrawResources
     size_t applied = 0;
     bool stateDirty = true;            // registers changed, or bindings invalidated, since the last bind
     bool aluDirty[2] = { true, true }; // b0 / b1 constants changed since their last upload
+    // b2 as last uploaded (SharedConstants has no padding); sharedValid false = must upload.
+    SharedConstants lastShared{};
+    bool sharedValid = false;
+    // Per fetch slot: the 6 fetch dwords last decoded, their TextureFetch and texture key. Only the
+    // decode is cached; resolve lookup, hashing and SRV choice still run per bind.
+    struct FetchSlot
+    {
+        uint32_t raw[6];
+        TextureFetch t;
+        uint64_t key;
+        bool valid = false;
+    };
+    FetchSlot fetchSlots[32];
     uint32_t lastTexSlots = 0;         // texture slots the last bind decoded
     // Resolve copies of the target by guest physical destination; kept across frames (the
     // frontbuffer and render-to-texture results are read after the frame that made them).
@@ -1054,9 +1077,11 @@ void D3D11Renderer::ApplyRegisterWrites(const Frame& frame, size_t end)
             static const unsigned long long traceCull = getenv("SCDA_TRACE_CULL") ? strtoull(getenv("SCDA_TRACE_CULL"), nullptr, 10) : 0;
             if (traceCull && m_presented == traceCull && w.index == 0x2205 && w.value != r.regs[0x2205])
                 RuntimeLog("[cull] present %llu before draw %u: %08X -> %08X (write %zu)\n", m_presented, m_lastDrawn + m_lastSkipped, r.regs[0x2205], w.value, r.applied);
-            r.regs.Set(w.index, w.value);
-            if (w.index - kRegAluConstants < 2048)
+            // SCDA_NO_CB_SKIP=1: rewrites of an unchanged ALU constant still dirty b0/b1 (A/B baseline).
+            static const bool noCbSkip = getenv("SCDA_NO_CB_SKIP") != nullptr;
+            if (w.index - kRegAluConstants < 2048 && (noCbSkip || r.regs[w.index] != w.value))
                 r.aluDirty[(w.index - kRegAluConstants) >> 10] = true;
+            r.regs.Set(w.index, w.value);
         }
         r.stateDirty = true;
     }
@@ -1145,8 +1170,10 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     DrawResources& r = *m_draw;
     for (uint32_t pixel = 0; pixel < 2; pixel++)
     {
+        g_cbStats.aluBinds[pixel]++;
         if (!r.aluDirty[pixel])
             continue; // b0/b1 already hold these constants
+        g_cbStats.aluUploads[pixel]++;
         // b0/b1 = ALU constants 0-1023 / 1024-2047, straight from the register file.
         m_context->UpdateSubresource(r.constants[pixel].Get(), 0, nullptr, regs.Data() + kRegAluConstants + (pixel ? 1024 : 0), 0, 0);
         r.aluDirty[pixel] = false;
@@ -1298,7 +1325,20 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         srvs[slot] = r.white.Get();
         if (!(texSlots >> slot & 1))
             continue;
-        TextureFetch t = DecodeTextureFetch(regs, slot);
+        // Decode only when the slot's fetch dwords changed (SCDA_NO_FETCH_CACHE=1: every bind).
+        static const bool noFetchCache = getenv("SCDA_NO_FETCH_CACHE") != nullptr;
+        const uint32_t* raw = regs.Data() + kRegFetchConstants + slot * 6;
+        DrawResources::FetchSlot& fs = r.fetchSlots[slot];
+        if (noFetchCache || !fs.valid || memcmp(fs.raw, raw, sizeof fs.raw) != 0)
+        {
+            memcpy(fs.raw, raw, sizeof fs.raw);
+            fs.t = DecodeTextureFetch(regs, slot);
+            fs.key = 1469598103934665603ull;
+            for (uint32_t i = 0; i < 6; i++)
+                fs.key = (fs.key ^ raw[i]) * 1099511628211ull;
+            fs.valid = true;
+        }
+        TextureFetch t = fs.t;
         if (!t.valid)
             continue;
         // Cube textures (dimension 3) bind at g_TexCube (t64+): six faces one TextureCubeFaceBytes
@@ -1402,9 +1442,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
             }
             continue;
         }
-        uint64_t key = 1469598103934665603ull;
-        for (uint32_t i = 0; i < 6; i++)
-            key = (key ^ regs[kRegFetchConstants + slot * 6 + i]) * 1099511628211ull;
+        const uint64_t key = fs.key;
         auto it = r.textures.find(key);
         if (it == r.textures.end())
         {
@@ -1605,7 +1643,16 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         if (it->second)
             srvs[slot] = it->second.Get();
     }
-    m_context->UpdateSubresource(r.constants[2].Get(), 0, nullptr, &shared, 0, 0);
+    // b2 only when the final payload differs from the last upload (SCDA_NO_CB_SKIP=1: always).
+    static const bool noCbSkip = getenv("SCDA_NO_CB_SKIP") != nullptr;
+    g_cbStats.sharedBinds++;
+    if (noCbSkip || !r.sharedValid || memcmp(&shared, &r.lastShared, sizeof shared) != 0)
+    {
+        m_context->UpdateSubresource(r.constants[2].Get(), 0, nullptr, &shared, 0, 0);
+        r.lastShared = shared;
+        r.sharedValid = true;
+        g_cbStats.sharedUploads++;
+    }
     // Only the changed range per stage (6 x 32-slot binds per draw were ~a third of the driver time
     // on newyork_02). SCDA_NO_SRV_SHADOW=1: always rebind all 96.
     static const bool noSrvShadow = getenv("SCDA_NO_SRV_SHADOW") != nullptr;
@@ -2978,6 +3025,7 @@ void D3D11Renderer::Present(const Frame& frame)
             r.last = nullptr;
             r.stateDirty = true;
             r.aluDirty[0] = r.aluDirty[1] = true;
+            r.sharedValid = false;
             r.activeQuery.Reset(); // results would land in the relaunched title's memory
             for (size_t i = 0; i < r.pendingQueries.size(); i++)
                 Frames().QueryAnswered();
@@ -3191,6 +3239,15 @@ void D3D11Renderer::Present(const Frame& frame)
         return;
     }
     m_presented++;
+    // SCDA_CB_STATS=<n>: every n presents, constant buffer binds vs uploads since the last report.
+    static const unsigned cbStatsEvery = getenv("SCDA_CB_STATS") ? unsigned(atoi(getenv("SCDA_CB_STATS"))) : 0;
+    if (cbStatsEvery && m_presented % cbStatsEvery == 0)
+    {
+        const CbStats& c = g_cbStats;
+        RuntimeLog("[cb] present %llu: vs %llu/%llu ps %llu/%llu shared %llu/%llu (uploads/binds)\n", m_presented,
+            c.aluUploads[0], c.aluBinds[0], c.aluUploads[1], c.aluBinds[1], c.sharedUploads, c.sharedBinds);
+        g_cbStats = {};
+    }
     if (g_traceJumpPresents > 0)
         g_traceJumpPresents--;
     ComPtr<ID3D11InfoQueue> queue;
