@@ -242,6 +242,25 @@ Evidence paths under `_run/` are local only (git-ignored).
   mask may not reach the screen (clear alpha 1 + ONE/ONE saturating, then PS cf73f1b6 moves mask A into B). Next: a repro
   where the 360 clearly shows a character shadow (wooden room ~148 s), then A/B the mask path there.
 - **Tool:** `SCDA_SKIP_IB=<ib>[/<vs>][,..]` skips one mesh (optionally in one pass only).
+- **2026-11-02 evening: the mask's clear decides it.** (`_run/shadow/wood/`, `chans.py` reads the 32-bit resolve dumps
+  with alpha; PIL drops it.)
+  - Mask channels at the end: R = last light's 9-tap term (colour replace), G = c0.w, B = the mask alpha summed over
+    all lights (ONE/ONE; PS cf73f1b6 moves A to B), A = c0.w. The blur PS 055ea5f4 averages x/y/w and passes B through.
+  - Every scene consumer reads `.yzw` or `.zw`, never R. HQ PS 63053924: `min(B + s13 baked + 2*oT8.x, A)`.
+    With the clear's alpha = 1, B is always 1, so the dynamic light (and its shadows) never reach the screen.
+  - The title clears the mask with a fast clear (trace `SCDA_TRACE_DEPTH_ALIAS=1`, now with the quad extents): a 4x
+    depth-only alias quad (05020140, 320x176 = rows 0-351) plus a colour quad of (0,0,0,0) for rows 352-359 only.
+    So the intended clear is 0 everywhere, the same as raw z (`SCDA_ALIAS_RAW_Z=1`).
+  - Raw z on HQ_05 start (frame 1600): B varies, and Sam's head shadow shows on the lamp-lit wall
+    (`_run/shadow/wood/hq05_3way.png`: default / raw z / no alias). HQ_01_A stairwell: default and raw z look nearly
+    the same, both match the 360 ref.
+  - Conflict, unchanged: Kinshasa01's B is the cleared alpha (cf73f1b6 runs before the sun's REVSUB/MIN passes on
+    G/A), so raw z darkens its ground (`kin_3way.png`). HQ_05 and Kinshasa01 trace identical clears (colour 0,
+    z -3.7e-9, ref 0). With no alias overwrite (`SCDA_NO_DEPTH_COLOR_ALIAS=1`) the colour quad leaves rows 0-351
+    holding last frame's mask (bg A = 0.8): Kinshasa is lit, HQ still flat.
+  - Next: a repro at the HQ_01 wooden room (360 `hq1.mp4` ~140 s: clear Sam/Moss floor shadows). Check whether that
+    light uses the additive B path (needs clear 0) or the MIN path on A (works with clear 1). Needs a save there or
+    a scripted walk (Follow Moss, 30-140 s in the ref).
 
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 

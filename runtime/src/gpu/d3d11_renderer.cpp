@@ -2172,6 +2172,10 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         RuntimeLog("[zalias] frame %llu clear quad color %08X mode %u z %g colour %g %g %g %g\n", m_presented, r.regs[kRegRbColorInfo],
             r.regs[kRegRbModeControl] & 7, double(SnapshotVertexDword(d, frame, r.regs, 2)), double(SnapshotVertexDword(d, frame, r.regs, 3)),
             double(SnapshotVertexDword(d, frame, r.regs, 4)), double(SnapshotVertexDword(d, frame, r.regs, 5)), double(SnapshotVertexDword(d, frame, r.regs, 6)));
+    if (traceClearQuads && d.vs->hash == 0x10e10ea90b97dff6ull) // and the quad's extent (vertices 0-2 xy)
+        RuntimeLog("[zalias] quad xy %g %g / %g %g / %g %g wo %08X sc %08X %08X\n", double(SnapshotVertexDword(d, frame, r.regs, 0)), double(SnapshotVertexDword(d, frame, r.regs, 1)),
+            double(SnapshotVertexDword(d, frame, r.regs, 7)), double(SnapshotVertexDword(d, frame, r.regs, 8)), double(SnapshotVertexDword(d, frame, r.regs, 14)), double(SnapshotVertexDword(d, frame, r.regs, 15)),
+            r.regs[0x2080], r.regs[0x2081], r.regs[0x2082]);
     if (r.stateDirty || (texSlots & ~r.lastTexSlots))
     {
         r.lastTexSlots = r.stateDirty ? texSlots : r.lastTexSlots | texSlots;
