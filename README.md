@@ -59,17 +59,12 @@ How, in plain terms:
 - **No more flickering moon in New York.** The moon and clouds no longer pop out for a frame at a time.
 - **No more black walls and floors** at the start of Kinshasa, on the Osprey ramp in Iceland and in the Cozumel
   room. A fix for New York's sky also darkened large surfaces close to the camera.
-- **Clear sky through the ice.** Diving under the ice in Iceland and the Sea of Okhotsk, the view up through the
-  water was smeared with Sam and other things from underwater. The water's view of the world above now leaves out
-  everything below the surface, like the console.
 - **Cozumel's sea reaches the horizon.** The black, jagged strip between the sea and the sky is gone.
-- **Light distance setting** (F1 > Display). Lights switch off past a certain distance, so far parts of levels can
-  look dark, for example the Iceland geothermal plant. The default x4 shows far more lights than the console, like
-  the popular PC widescreen fix. x1 matches the console. It costs about 1.5 fps on the heaviest maps.
 - **Reflections and water.** Shiny surfaces and water reflect again instead of showing black.
 - **Shadows.** Kinshasa's ground is no longer covered in shadow, and the dark strip at the bottom of the screen in
   New York and the Hotel is gone.
-- **No more black flashes** in the JBA headquarters.
+- **No more black flashes** in the JBA headquarters, including the floor and walls blinking out while you turn
+  the camera.
 - **EMF vision** looks like the console's.
 - **Smaller fixes:** the strip at the bottom of the sniper scope, sparks and other particles, and a few texture and
   model formats. Every one of the game's 4,532 shaders now converts and compiles.
@@ -108,7 +103,7 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 | | |
 |:-:|:-:|
 | ![Cozumel: the sea to the horizon](docs/images/cozumel_horizon.jpg) | ![Iceland: the geothermal plant at night](docs/images/iceland_plant_vista.jpg) |
-| **Cozumel**: the sea reaches the horizon | **Iceland**: the geothermal plant, distant lights on (Light distance x4) |
+| **Cozumel**: the sea reaches the horizon | **Iceland**: the geothermal plant at night |
 | ![Iceland: EMF vision](docs/images/iceland_emf.jpg) | ![Iceland: Osprey bay](docs/images/iceland_osprey.jpg) |
 | **Iceland**: EMF vision | **Iceland**: Osprey bay before the drop |
 | ![Ellsworth Penitentiary](docs/images/jail_cell.jpg) | ![Sea of Okhotsk: under the ice](docs/images/okhotsk_ice_dive.jpg) |
@@ -206,7 +201,6 @@ AntiAliasing=Off
 Sharpening=0
 Upscaling=Off
 FOV=75
-LightDistance=4
 [Input]
 MouseLook=1
 MouseSensitivity=1.0
@@ -217,7 +211,7 @@ MouseInvertY=0
 - `Anisotropy` (1-16): keeps floors and walls sharp when you look at them at an angle.
 - `Mode`: `windowed`, `borderless` or `fullscreen`.
 - `CleanGoggles=1`: no scanlines or noise in the goggle views.
-- `FOV` (60-110): field of view. `LightDistance` (1-8): how far away lights stay on.
+- `FOV` (60-110): field of view.
 - Don't put comments on the same line as a setting.
 
 <img src="installer.png" width="640" alt="Installer">

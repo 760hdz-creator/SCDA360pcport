@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -427,7 +429,7 @@ struct DrawResources
     std::unordered_map<uint64_t, ComPtr<ID3D11PixelShader>> ps;
     // Fixed-function state by the registers it is built from.
     std::unordered_map<uint64_t, ComPtr<ID3D11BlendState>> blend;
-    std::unordered_map<uint32_t, ComPtr<ID3D11RasterizerState>> raster;
+    std::map<std::tuple<uint32_t, int32_t, float>, ComPtr<ID3D11RasterizerState>> raster; // flags, depth bias, slope
     std::unordered_map<uint64_t, ComPtr<ID3D11DepthStencilState>> depthStates;
     std::unordered_map<uint64_t, ComPtr<ID3D11SamplerState>> samplers;
     // Per frame: guest ranges already uploaded, textures by fetch constant.
@@ -1300,7 +1302,11 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     static const bool noDepthClip = getenv("SCDA_NO_DEPTH_CLIP") != nullptr; // A/B: never clip z
     uint32_t cull = noCull || backFaces ? 1 : HostCullMode(regs), ccw = HostFrontCounterClockwise(regs),
              noClip = noDepthClip || ((regs[0x2204] >> 16) & 1);
-    auto& raster = r.raster[cull | (ccw << 4) | (noClip << 5)];
+    // Polygon offset (HostDepthBias); the slope is per host pixel: x host pixels per guest pixel.
+    float slope = 0;
+    const int32_t depthBias = HostDepthBias(regs, slope);
+    slope *= float(targetScale * layout.samplesX);
+    auto& raster = r.raster[{ cull | (ccw << 4) | (noClip << 5), depthBias, slope }];
     if (!raster)
     {
         D3D11_RASTERIZER_DESC rd{};
@@ -1308,6 +1314,8 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         rd.CullMode = D3D11_CULL_MODE(cull);
         rd.FrontCounterClockwise = ccw;
         rd.DepthClipEnable = !noClip;
+        rd.DepthBias = depthBias;
+        rd.SlopeScaledDepthBias = slope;
         m_device->CreateRasterizerState(&rd, &raster);
     }
     m_context->RSSetState(raster.Get());
@@ -1898,6 +1906,9 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             if ((r.regs[0x2204] >> i) & 1)
                 RuntimeLog("[rtrace]   ucp%u %g %g %g %g\n", i, std::bit_cast<float>(r.regs[0x2388 + i * 4]), std::bit_cast<float>(r.regs[0x2389 + i * 4]),
                     std::bit_cast<float>(r.regs[0x238A + i * 4]), std::bit_cast<float>(r.regs[0x238B + i * 4]));
+        if (r.regs[0x2205] & 0x3800) // PA_SU_SC_MODE_CNTL poly offset enables: PA_SU_POLY_OFFSET_FRONT/BACK_SCALE/OFFSET
+            RuntimeLog("[rtrace]   polyoffset front %g %g back %g %g\n", std::bit_cast<float>(r.regs[0x2380]), std::bit_cast<float>(r.regs[0x2381]),
+                std::bit_cast<float>(r.regs[0x2382]), std::bit_cast<float>(r.regs[0x2383]));
         // SCDA_TRACE_VSC=<vs hash hex>[,..]: draws with one of those VS also log VS c8-c17 (transforms).
         static const std::vector<uint64_t> traceVscList = []
         {

@@ -154,6 +154,7 @@ HostDepthStencil DecodeDepthStencil(const RegisterFile& regs);
 // PA_SU_SC_MODE_CNTL (0x2205): D3D11_CULL_MODE (1 none, 2 front, 3 back); front face winding.
 uint32_t HostCullMode(const RegisterFile& regs);
 bool HostFrontCounterClockwise(const RegisterFile& regs);
+int32_t HostDepthBias(const RegisterFile& regs, float& slopeScale); // host DepthBias (D32_FLOAT ULPs), slope per guest pixel
 
 // Texture fetch constant addressing (dword 0 clamp_x/y/z) and filtering (dword 3 mag/min/mip)
 // as D3D11_TEXTURE_ADDRESS_MODE / D3D11_FILTER values; mip levels the sampler may use (dword 4,

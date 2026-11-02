@@ -72,8 +72,9 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
     c.pointMinMax = r[0x2281];
     // PA_CL_CLIP_CNTL (0x2204): ucp_ena_0..5 in bits 0-5, all off with clip_disable (bit 16), as Xenia.
     // Planes PA_CL_UCP_0_X.. at 0x2388, 4 floats each. ucp_cull_only_ena (bit 17) is treated as clip.
-    // SCDA_NO_UCP=1 turns them off (A/B).
-    static const bool noUcp = getenv("SCDA_NO_UCP") != nullptr;
+    // Off by default since 2026-11-02 (user asked to back the fog/ice-hole fix out while bugs are
+    // chased); SCDA_UCP=1 turns them on.
+    static const bool noUcp = getenv("SCDA_UCP") == nullptr;
     c.ucpEnable = noUcp || ((r[0x2204] >> 16) & 1) ? 0 : r[0x2204] & 0x3F;
     for (uint32_t i = 0; i < 6; i++)
         for (uint32_t k = 0; k < 4; k++)
@@ -739,6 +740,41 @@ uint32_t HostCullMode(const RegisterFile& r)
 }
 
 bool HostFrontCounterClockwise(const RegisterFile& r) { return !(r[0x2205] & 4); }
+
+// Polygon offset: PA_SU_SC_MODE_CNTL bit 11 (front) / 12 (back) enable PA_SU_POLY_OFFSET_FRONT/BACK
+// _SCALE/_OFFSET (0x2380-0x2383). The offset is an absolute depth delta; converted like Xenia
+// (draw_util.h GetD3D10IntegerPolygonOffset) to host D32_FLOAT ULPs: float24 guest depth = float24
+// ULPs in the [0.5, 1) range (x 2^21, ceil) x 8. Front offset preferred unless front faces are culled.
+// The title's occlusion query boxes use 6e-5: without it, box faces coplanar with walls/floors fail
+// the GEQUAL test on camera turns -> the query reads 0 -> the room is culled for a frame (JBA HQ).
+// shortcut: lines/points get the polygon offset too (bit 13 para enable not checked).
+int32_t HostDepthBias(const RegisterFile& r, float& slopeScale)
+{
+    slopeScale = 0;
+    static const bool off = getenv("SCDA_NO_POLY_OFFSET") != nullptr; // A/B: old (ignored)
+    const uint32_t m = r[0x2205];
+    float scale = 0, offset = 0;
+    if (off)
+        return 0;
+    if ((m & (1u << 11)) && !(m & 1))
+    {
+        scale = std::bit_cast<float>(r[0x2380]);
+        offset = std::bit_cast<float>(r[0x2381]);
+    }
+    if ((m & (1u << 12)) && !(m & 2) && !scale && !offset)
+    {
+        scale = std::bit_cast<float>(r[0x2382]);
+        offset = std::bit_cast<float>(r[0x2383]);
+    }
+    slopeScale = scale * (1.0f / 16.0f); // xenos::kPolygonOffsetScaleSubpixelUnit
+    if (!offset)
+        return 0;
+    const bool float24 = (r[kRegRbDepthInfo] >> 16) & 1;
+    int32_t bias = int32_t(std::ceil(std::abs(offset) * (float24 ? float(1u << 21) : float((1u << 24) - 1))));
+    if (float24)
+        bias <<= 3;
+    return offset < 0 ? -bias : bias;
+}
 
 uint32_t HostTopology(uint32_t primType)
 {
