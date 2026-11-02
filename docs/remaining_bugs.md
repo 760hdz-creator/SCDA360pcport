@@ -227,7 +227,7 @@ Evidence paths under `_run/` are local only (git-ignored).
   27.8-28.6 fps (older exe 25.7-26.2), no cost. The old census 2550 view (grey surface, straight cut) was not
   reproduced in either build, so that exact symptom is unconfirmed.
 
-## P3. Fog and light shafts: no confirmed difference left
+## DONE. Fog and light shafts: no confirmed difference left (closed 2026-11-01)
 
 - **Checked 2026-11-01:** Iceland light shaft frame 2300 vs ref. The earlier "too bright" match was a timing
   mismatch: ref 171 s is as blown out as ours (luma p90 230 vs 238, 4% clipped in both). Shaft pixel traced per draw
@@ -237,7 +237,7 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Blend clamp theory struck for this scene:** no blend in it reads destination alpha, so FP16 alpha > 1 never
   reaches colour. Left: 7e3 precision (7-bit mantissa) vs FP16 for faint layers; would need programmable blending.
 - **Not re-checked:** Osprey bay fog (census frame 2000 vs ref ~161-163 s).
-- **Status:** open only if a side-by-side at an aligned moment shows a difference.
+- **Status:** closed 2026-11-01 by the user; the Osprey bay side-by-side was skipped. Reopen only if a player reports a difference.
 
 ## P3. Scale 2+ edge row/column and faint line at a tile split
 
