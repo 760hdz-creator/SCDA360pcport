@@ -597,8 +597,17 @@ bool CommandProcessorTick(CpStats* stats)
     CpStats local{};
     CpStats& st = stats ? *stats : local;
     uint32_t write = GpuRegister(kRegCpRbWptr) % (size / 4);
+    LARGE_INTEGER t0, t1, f;
+    QueryPerformanceCounter(&t0);
+    const uint32_t backlog = (write + size / 4 - g_read) % (size / 4);
+    const uint64_t packetsBefore = st.packets;
     g_read = Pm4WalkRing({ base, size }, g_read, write,
         [&](uint32_t h, const Pm4Payload& p) { return Execute(h, p, 0, st); });
+    QueryPerformanceCounter(&t1);
+    QueryPerformanceFrequency(&f);
+    // Timeline: one event per tick that ran packets, a = duration us, b = ring backlog (dwords) at its start.
+    if (st.packets != packetsBefore)
+        TimelineEvent('T', uint32_t((t1.QuadPart - t0.QuadPart) * 1000000 / f.QuadPart), backlog);
     Frames().SetCpIdle(g_read == write); // a packet left behind = stalled in a wait
     if (uint32_t wb = Gpu().rptrWriteback.load())
     {

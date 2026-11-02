@@ -93,6 +93,7 @@ add_executable(scda
     src/light_distance.cpp
     src/profiler.cpp
     src/timeline.cpp
+    src/wait_trace.cpp
     src/launch.cpp
     src/guest_time.cpp
     src/gpu/shader_cache.cpp
