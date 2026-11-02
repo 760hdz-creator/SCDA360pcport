@@ -132,8 +132,8 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 **Known issues**
 
 - Most maps hold the game's 30 fps limit. New York's busiest areas can drop to about 25 fps.
-- Fog, light shafts and the water surface seen from below may still look slightly different from the console in
-  places.
+- The fog in Iceland's Osprey bay has not been compared side by side with the console yet. Light shafts and
+  the water seen from below have been checked and match.
 - No ultrawide support yet. 21:9 and 32:9 are planned ([issue #2](https://github.com/8gramlabs/SCDA360pcport/issues/2)).
 - Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
   show up about a third of the way down the screen.
@@ -144,7 +144,7 @@ Roughly in this order:
 
 1. **Play the whole story by hand**, start to finish, and fix what turns up.
 2. **A ready-made installer** for people who don't want to build it themselves. This will be the first release.
-3. **Even closer to the console's look.** Fix the last small differences in fog and light shafts.
+3. **Even closer to the console's look.** Compare the remaining scenes (like the Osprey bay fog) with the console.
 4. **Ultrawide and more PC options**, once the graphics are settled.
 
 ## How to play
