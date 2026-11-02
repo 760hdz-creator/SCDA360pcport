@@ -432,8 +432,10 @@ struct DrawResources
     std::map<std::tuple<uint32_t, int32_t, float>, ComPtr<ID3D11RasterizerState>> raster; // flags, depth bias, slope
     std::unordered_map<uint64_t, ComPtr<ID3D11DepthStencilState>> depthStates;
     std::unordered_map<uint64_t, ComPtr<ID3D11SamplerState>> samplers;
-    // Per frame: guest ranges already uploaded, textures by fetch constant.
-    std::unordered_map<uint64_t, uint32_t> uploaded; // range key -> Frame::memory snapshot in the buffer
+    // Guest ranges in the memory buffer (kept across frames); per frame: textures by fetch constant.
+    std::unordered_map<uint64_t, uint64_t> uploaded; // range key -> Frame::Snapshot::id in the buffer
+    std::map<uint32_t, std::pair<uint32_t, uint64_t>> uploadedSpans; // start -> (end, key); disjoint
+    std::vector<uint8_t> uploadMirror; // SCDA_UPLOAD_CHECK: CPU copy of the buffer
     std::unordered_map<uint64_t, ComPtr<ID3D11ShaderResourceView>> textures;
     // Cube textures (fetch dimension 3) by fetch constant, re-made when the faces' guest bytes change.
     struct CubeEntry
@@ -1027,11 +1029,22 @@ void D3D11Renderer::UploadVertexMemory(const DrawCall& d, const Frame& frame)
         MemoryRange range{ uint32_t(snap.key >> 32), uint32_t(snap.key) };
         if (range.physical + uint64_t(range.bytes) > kMaxMemory)
             continue;
-        // shortcut: overlapping ranges with different keys do not invalidate each other.
-        auto up = r.uploaded.find(snap.key);
-        if (up != r.uploaded.end() && up->second == index)
-            continue;
+        static const bool check = getenv("SCDA_UPLOAD_CHECK") != nullptr;
         uint32_t end = range.physical + range.bytes;
+        auto up = r.uploaded.find(snap.key);
+        if (up != r.uploaded.end() && up->second == snap.id)
+        {
+            // SCDA_UPLOAD_CHECK=1: a CPU copy of the buffer proves the skipped range holds these bytes.
+            if (check && (r.uploadMirror.size() < end || memcmp(&r.uploadMirror[range.physical], snap.Bytes().data(), range.bytes)))
+            {
+                static uint32_t mismatches;
+                if (++mismatches <= 20 || mismatches % 1000 == 0)
+                    RuntimeLog("[upload] MISMATCH %u: present %llu key %016llx\n", mismatches, m_presented, (unsigned long long)snap.key);
+            }
+            continue;
+        }
+        if (!range.bytes)
+            continue;
         if (end > r.memoryBytes)
         {
             uint32_t size = std::min<uint32_t>((end + (16u << 20) - 1) & ~((16u << 20) - 1), kMaxMemory);
@@ -1048,6 +1061,7 @@ void D3D11Renderer::UploadVertexMemory(const DrawCall& d, const Frame& frame)
             r.memorySrv.Reset();
             r.memoryBytes = 0;
             r.uploaded.clear(); // new buffer: earlier ranges must be uploaded again
+            r.uploadedSpans.clear();
             if (FAILED(m_device->CreateBuffer(&bd, nullptr, &r.memory)) ||
                 FAILED(m_device->CreateShaderResourceView(r.memory.Get(), &vd, &r.memorySrv)))
             {
@@ -1059,8 +1073,25 @@ void D3D11Renderer::UploadVertexMemory(const DrawCall& d, const Frame& frame)
             r.memoryBytes = size;
         }
         D3D11_BOX box{ range.physical, 0, 0, end, 1, 1 };
-        m_context->UpdateSubresource(r.memory.Get(), 0, &box, snap.bytes.data(), 0, 0);
-        r.uploaded[snap.key] = index;
+        m_context->UpdateSubresource(r.memory.Get(), 0, &box, snap.Bytes().data(), 0, 0);
+        if (check)
+        {
+            if (r.uploadMirror.size() < r.memoryBytes)
+                r.uploadMirror.resize(r.memoryBytes);
+            memcpy(&r.uploadMirror[range.physical], snap.Bytes().data(), range.bytes);
+        }
+        // Ranges this upload overwrote (in part) no longer hold their snapshot: forget them. Spans in
+        // uploadedSpans never overlap, so only the one before the new start can reach into it.
+        auto s = r.uploadedSpans.lower_bound(range.physical);
+        if (s != r.uploadedSpans.begin() && std::prev(s)->second.first > range.physical)
+            --s;
+        while (s != r.uploadedSpans.end() && s->first < end)
+        {
+            r.uploaded.erase(s->second.second);
+            s = r.uploadedSpans.erase(s);
+        }
+        r.uploadedSpans[range.physical] = { end, snap.key };
+        r.uploaded[snap.key] = snap.id;
     }
     ID3D11ShaderResourceView* mem = r.memorySrv.Get();
     m_context->VSSetShaderResources(kHlslMemorySlot, 1, &mem);
@@ -1130,10 +1161,10 @@ static float SnapshotVertexDword(const DrawCall& d, const Frame& frame, const Re
             continue;
         const Frame::Snapshot& snap = frame.memory[mi];
         const uint32_t base = uint32_t(snap.key >> 32);
-        if (at < base || uint64_t(at) + 4 > uint64_t(base) + snap.bytes.size())
+        if (at < base || uint64_t(at) + 4 > uint64_t(base) + snap.Bytes().size())
             continue;
         uint32_t w;
-        memcpy(&w, &snap.bytes[at - base], 4);
+        memcpy(&w, &snap.Bytes()[at - base], 4);
         return std::bit_cast<float>(_byteswap_ulong(w));
     }
     return NAN;
@@ -1842,7 +1873,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             {
                 const auto& snap = frame.memory[mi];
                 uint64_t h = 1469598103934665603ull;
-                for (uint8_t b : snap.bytes)
+                for (uint8_t b : snap.Bytes())
                     h = (h ^ b) * 1099511628211ull;
                 snprintf(buf, sizeof(buf), " snap %08X+%u h%016llx", uint32_t(snap.key >> 32), uint32_t(snap.key), (unsigned long long)h);
                 s += buf;
@@ -1855,7 +1886,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                     snprintf(name, sizeof(name), "watch_%08X_%016llx.bin", uint32_t(snap.key >> 32), (unsigned long long)h);
                     if (FILE* f = fopen(name, "wb"))
                     {
-                        fwrite(snap.bytes.data(), 1, snap.bytes.size(), f);
+                        fwrite(snap.Bytes().data(), 1, snap.Bytes().size(), f);
                         fclose(f);
                     }
                     if (d.indexSnapshot >= 0 && size_t(d.indexSnapshot) < frame.memory.size())
@@ -1863,19 +1894,19 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         snprintf(name, sizeof(name), "watch_%08X_%016llx.idx", uint32_t(snap.key >> 32), (unsigned long long)h);
                         if (FILE* f = fopen(name, "wb"))
                         {
-                            fwrite(frame.memory[d.indexSnapshot].bytes.data(), 1, frame.memory[d.indexSnapshot].bytes.size(), f);
+                            fwrite(frame.memory[d.indexSnapshot].Bytes().data(), 1, frame.memory[d.indexSnapshot].Bytes().size(), f);
                             fclose(f);
                         }
                     }
                 }
                 if (d.indexCount == 4)
-                    for (uint32_t v = 0; (v + 1) * 28 <= snap.bytes.size() && v < 4; v++)
+                    for (uint32_t v = 0; (v + 1) * 28 <= snap.Bytes().size() && v < 4; v++)
                     {
                         float xyz[3];
                         for (uint32_t k = 0; k < 3; k++)
                         {
                             uint32_t w;
-                            memcpy(&w, &snap.bytes[v * 28 + k * 4], 4);
+                            memcpy(&w, &snap.Bytes()[v * 28 + k * 4], 4);
                             xyz[k] = std::bit_cast<float>(_byteswap_ulong(w));
                         }
                         snprintf(buf, sizeof(buf), " v(%.9g %.9g %.9g)", xyz[0], xyz[1], xyz[2]);
@@ -1969,7 +2000,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                 std::string idx;
                 if (d.source == IndexSource::Dma && d.indexSnapshot >= 0 && size_t(d.indexSnapshot) < frame.memory.size())
                 {
-                    const std::vector<uint8_t>& b = frame.memory[d.indexSnapshot].bytes;
+                    const std::vector<uint8_t>& b = frame.memory[d.indexSnapshot].Bytes();
                     for (uint32_t k = 0; k < std::min<uint32_t>(d.indexCount, 12); k++)
                     {
                         uint32_t v = 0;
@@ -1988,14 +2019,14 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         continue;
                     const auto& snap = frame.memory[mi];
                     std::string vs;
-                    for (uint32_t v = 0; (v + 1) * 28 <= snap.bytes.size() && v < 4; v++)
+                    for (uint32_t v = 0; (v + 1) * 28 <= snap.Bytes().size() && v < 4; v++)
                     {
                         char buf[96];
                         float xyz[3];
                         for (uint32_t k = 0; k < 3; k++)
                         {
                             uint32_t w;
-                            memcpy(&w, &snap.bytes[v * 28 + k * 4], 4);
+                            memcpy(&w, &snap.Bytes()[v * 28 + k * 4], 4);
                             w = _byteswap_ulong(w);
                             memcpy(&xyz[k], &w, 4);
                         }
@@ -2072,13 +2103,13 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             {
                 uint64_t h = 1469598103934665603ull;
                 if (m >= 0 && size_t(m) < frame.memory.size())
-                    for (uint8_t b : frame.memory[m].bytes)
+                    for (uint8_t b : frame.memory[m].Bytes())
                         h = (h ^ b) * 1099511628211ull;
                 return (unsigned long long)h;
             };
             for (uint32_t m : d.memory)
                 RuntimeLog("[rtrace]   snap %u key %016llx size %zu hash %016llx\n", m, (unsigned long long)frame.memory[m].key,
-                    frame.memory[m].bytes.size(), hash(int32_t(m)));
+                    frame.memory[m].Bytes().size(), hash(int32_t(m)));
             RuntimeLog("[rtrace]   idx %d hash %016llx prim %u src %d i32 %d endian %u vgt %08X %08X %08X %08X colorctl %08X aref %08X mode %08X\n",
                 d.indexSnapshot, hash(d.indexSnapshot), d.primType, int(d.source), int(d.index32), d.indexEndian, r.regs[0x2100],
                 r.regs[0x2101], r.regs[0x2102], r.regs[0x2103], r.regs[0x2202], r.regs[0x210E], r.regs[kRegRbModeControl]);
@@ -2328,7 +2359,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                 return;
             }
             indices.resize(d.indexBytes);
-            SwapIndices(frame.memory[d.indexSnapshot].bytes.data(), d.indexBytes, d.indexEndian, indices.data());
+            SwapIndices(frame.memory[d.indexSnapshot].Bytes().data(), d.indexBytes, d.indexEndian, indices.data());
             count = std::min(d.indexCount, d.indexBytes / (d.index32 ? 4 : 2));
             // SCDA_DUMP_STRIPS=<dir>,<present>: every DMA triangle strip with primitive reset in that present,
             // as <dir>/d<draw>_<vs>.idx (u32 indices, reset value as is), for offline winding analysis.
@@ -3204,7 +3235,12 @@ void D3D11Renderer::Present(const Frame& frame)
             m_context->End(r.activeQuery.Get());
             r.activeQuery.Reset();
         }
-        r.uploaded.clear();
+        static const bool noPersist = getenv("SCDA_NO_SNAP_PERSIST") != nullptr;
+        if (noPersist) // old behaviour: every frame uploads its ranges again
+        {
+            r.uploaded.clear();
+            r.uploadedSpans.clear();
+        }
         if (frame.partial) // the guest frame continues in the next Frame: no present
         {
             g_frameDrawBase += frame.draws.size();

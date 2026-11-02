@@ -243,7 +243,7 @@ TEST(vertex_snapshots_are_versioned)
     CHECK(q.PopFrame(f));
     CHECK_EQ(f.memory.size(), size_t(3));
     CHECK_EQ(f.memory[s1].key, 42ull);
-    CHECK_EQ(f.memory[s1].bytes[0], 5);
+    CHECK_EQ(f.memory[s1].Bytes()[0], 5);
     // A new frame starts with no versions.
     CHECK_EQ(q.AddVertexData(42, b, 4), 0u);
 }

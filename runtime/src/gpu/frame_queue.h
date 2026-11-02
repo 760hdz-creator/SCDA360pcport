@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <gpu/draw.h>
@@ -92,7 +93,9 @@ struct Frame
     struct Snapshot
     {
         uint64_t key; // MemoryRangeKey
-        std::vector<uint8_t> bytes; // as in guest memory
+        std::shared_ptr<const std::vector<uint8_t>> data; // as in guest memory; frames share unchanged ones
+        uint64_t id = 0; // unique per copy: the same id = the same bytes (renderer upload skip)
+        const std::vector<uint8_t>& Bytes() const { return *data; }
     };
     std::vector<Snapshot> memory;
     FrameStats stats;
@@ -148,11 +151,14 @@ public:
         m_open.draws.push_back(std::move(d));
     }
     // Snapshots a guest range into the open frame; returns the index in Frame::memory. Reuses the
-    // range's latest snapshot when the bytes are unchanged.
+    // range's latest snapshot when the bytes are unchanged, also one from an earlier frame (static
+    // geometry: newyork_02 re-copied ~24 MB per frame), which also lets the renderer skip the upload.
     uint32_t AddVertexData(uint64_t key, const uint8_t* data, uint32_t bytes)
     {
         // SCDA_SNAP_COMPARE=1: always compare bytes (ignore the epoch).
         static const bool alwaysCompare = getenv("SCDA_SNAP_COMPARE") != nullptr;
+        // SCDA_NO_SNAP_PERSIST=1: every frame copies its ranges again (and re-uploads them).
+        static const bool noPersist = getenv("SCDA_NO_SNAP_PERSIST") != nullptr;
         std::lock_guard lock(m_mutex);
         auto [it, added] = m_latest.try_emplace(key, Latest{ uint32_t(m_open.memory.size()), m_epoch });
         if (!added)
@@ -162,7 +168,7 @@ public:
                 statSkip++;
                 return it->second.index;
             }
-            const auto& last = m_open.memory[it->second.index].bytes;
+            const auto& last = m_open.memory[it->second.index].Bytes();
             statCmp++; statCmpBytes += bytes;
             if (last.size() == bytes && !memcmp(last.data(), data, bytes))
             {
@@ -172,8 +178,26 @@ public:
             statDiff++; statDiffBytes += bytes;
             it->second = { uint32_t(m_open.memory.size()), m_epoch };
         }
+        else if (!noPersist)
+        {
+            auto p = m_persist.find(key);
+            if (p != m_persist.end())
+            {
+                p->second.lastFrame = m_next;
+                statKeepCmp++; statKeepCmpBytes += bytes;
+                const auto& last = p->second.snapshot.Bytes();
+                if (last.size() == bytes && !memcmp(last.data(), data, bytes))
+                {
+                    m_open.memory.push_back(p->second.snapshot);
+                    return it->second.index;
+                }
+            }
+        }
         statCopy++; statCopyBytes += bytes;
-        m_open.memory.push_back({ key, std::vector<uint8_t>(data, data + bytes) });
+        Frame::Snapshot s{ key, std::make_shared<const std::vector<uint8_t>>(data, data + bytes), ++m_snapshotId };
+        if (!noPersist)
+            m_persist[key] = { s, m_next };
+        m_open.memory.push_back(std::move(s));
         return it->second.index;
     }
     // A begin starts a new generation of its block; the end carries the same one. Every end is
@@ -260,10 +284,13 @@ public:
         m_open.stats.frame = m_next++;
         AnswerLateQueriesLocked();
         if (getenv("SCDA_TRACE_SNAP") && m_open.stats.frame % 100 == 0)
-            RuntimeLog("[snap] frame %llu: skip %llu cmp %llu (%llu KB) diff %llu (%llu KB) copy %llu (%llu KB) regs %zu draws %zu\n",
-                (unsigned long long)m_open.stats.frame, statSkip, statCmp, statCmpBytes >> 10, statDiff, statDiffBytes >> 10, statCopy,
-                statCopyBytes >> 10, m_open.regWrites.size(), m_open.draws.size());
-        statSkip = statCmp = statCmpBytes = statDiff = statDiffBytes = statCopy = statCopyBytes = 0;
+            RuntimeLog("[snap] frame %llu: skip %llu cmp %llu (%llu KB) diff %llu (%llu KB) keep-cmp %llu (%llu KB) copy %llu (%llu KB) "
+                       "persisted %zu regs %zu draws %zu\n",
+                (unsigned long long)m_open.stats.frame, statSkip, statCmp, statCmpBytes >> 10, statDiff, statDiffBytes >> 10, statKeepCmp,
+                statKeepCmpBytes >> 10, statCopy, statCopyBytes >> 10, m_persist.size(), m_open.regWrites.size(), m_open.draws.size());
+        statSkip = statCmp = statCmpBytes = statDiff = statDiffBytes = statCopy = statCopyBytes = statKeepCmp = statKeepCmpBytes = 0;
+        if (m_next % 32 == 0) // ranges unused for a while (a level change) free their copies
+            std::erase_if(m_persist, [&](const auto& p) { return p.second.lastFrame + kPersistFrames < m_next; });
         m_handOvers++;
         m_done.push_back(std::move(m_open));
         m_open = Frame{};
@@ -427,6 +454,14 @@ private:
         uint64_t epoch;  // CP epoch the bytes were last seen in
     };
     std::unordered_map<uint64_t, Latest> m_latest; // open frame: range key -> latest snapshot
+    struct Persisted
+    {
+        Frame::Snapshot snapshot;
+        uint64_t lastFrame; // m_next when last used: unused for kPersistFrames = dropped
+    };
+    static constexpr uint64_t kPersistFrames = 30;
+    std::unordered_map<uint64_t, Persisted> m_persist; // range key -> its latest copy, across frames
+    uint64_t m_snapshotId = 0;
     uint64_t m_epoch = 0;
     std::deque<Frame> m_done;
     uint64_t m_next = 0, m_dropped = 0, m_droppedDraws = 0;
@@ -445,6 +480,7 @@ private:
     std::chrono::steady_clock::time_point m_lastActivity{}; // last draw, query or swap added
     // SCDA_TRACE_SNAP=1: per-100-frame snapshot counters.
     unsigned long long statSkip = 0, statCmp = 0, statCmpBytes = 0, statDiff = 0, statDiffBytes = 0, statCopy = 0, statCopyBytes = 0;
+    unsigned long long statKeepCmp = 0, statKeepCmpBytes = 0;
 };
 
 FrameQueue& Frames();
