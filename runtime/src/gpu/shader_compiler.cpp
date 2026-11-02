@@ -196,7 +196,7 @@ void PrecompileShaders(const std::vector<const ShaderBlob*>& blobs, const std::f
             out[i] = std::move(shader);
         }
     };
-    const size_t threads = std::min<size_t>(todo.size(), std::max(1u, std::thread::hardware_concurrency() - 1));
+    const size_t threads = std::min<size_t>(todo.size(), std::max(2u, std::thread::hardware_concurrency()) - 1);
     std::vector<std::thread> pool;
     for (size_t i = 1; i < threads; i++)
         pool.emplace_back(worker);
