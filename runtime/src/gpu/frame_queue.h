@@ -72,6 +72,7 @@ struct Fence
 
 inline void WriteFence(const Fence& f)
 {
+    TimelineEvent('F', f.physical, f.value);
     *reinterpret_cast<uint32_t*>(GuestPtr(f.physical)) = f.value;
 }
 
@@ -250,6 +251,7 @@ public:
     void EndFrame(uint32_t frontbuffer = 0)
     {
         std::lock_guard lock(m_mutex);
+        TimelineEvent('E', uint32_t(m_open.draws.size()));
         m_open.frontbuffer = frontbuffer;
         m_open.stats.draws = uint32_t(m_open.draws.size()) + m_partialDraws;
         m_open.stats.resolves = uint32_t(m_open.resolves.size()) + m_partialResolves;
@@ -324,6 +326,7 @@ public:
 private:
     void HandOverPartial(std::chrono::steady_clock::time_point now)
     {
+        TimelineEvent('P', uint32_t(m_open.draws.size()));
         m_open.partial = true;
         m_open.stats.draws = uint32_t(m_open.draws.size());
         m_open.stats.resolves = uint32_t(m_open.resolves.size());

@@ -90,7 +90,11 @@ static DWORD WINAPI InterruptThread(void*)
             pending.swap(g_queue);
         }
         for (auto [source, cpu] : pending)
+        {
+            TimelineEvent('G', source, cpu);
             Deliver(*ctx, source, cpu);
+            TimelineEvent('g', source, cpu);
+        }
 
         QueryPerformanceCounter(&now);
         if (now.QuadPart >= next.QuadPart)

@@ -216,6 +216,8 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* e)
 }
 
 void ProfilerStart();
+void WatchStart();
+void TimelineStart();
 void KernelReset();
 void FsReset();
 void TlsReset();
@@ -354,6 +356,8 @@ int main(int argc, char** argv)
     if (!getenv("SCDA_HEADLESS"))
         HostWindowStart(LoadDisplaySettings(SettingsPath()));
     ProfilerStart();
+    WatchStart();
+    TimelineStart();
     if (const char* w = getenv("SCDA_WATCHDOG"))
         WatchdogStart((unsigned)atoi(w));
     // SCDA_LAUNCH_DATA=<file>: boot as if relaunched with that launch data (see SCDA_LAUNCH_DATA_OUT).

@@ -27,6 +27,8 @@ void GuestFreePhysical(uint32_t base, uint32_t size);
 uint32_t GuestTitleAllocatedBytes();
 
 void RuntimeLog(const char* fmt, ...);
+// SCDA_TIMELINE debug events (profiler.cpp); a no-op outside the window.
+void TimelineEvent(char kind, uint32_t a = 0, uint32_t b = 0);
 
 // The title has read the signed-in profile's settings (main menu, after the profile is picked):
 // the update notification waits for it.

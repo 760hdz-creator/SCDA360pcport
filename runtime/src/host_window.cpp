@@ -279,9 +279,20 @@ static void RenderThread(DisplaySettings s)
                     nextDump++;
         }
         dumping &= !frame.partial;
+        // Renderer busy time (Present = execute + present), reported on [frame] lines since the last one.
+        static LARGE_INTEGER qpf = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f; }();
+        static uint64_t busyTicks = 0, busyDraws = 0, busyFrames = 0;
+        LARGE_INTEGER t0, t1;
+        QueryPerformanceCounter(&t0);
+        TimelineEvent('R', frame.partial, uint32_t(frame.draws.size()));
         renderer.Present(frame);
+        TimelineEvent('r', frame.partial);
+        QueryPerformanceCounter(&t1);
+        busyTicks += t1.QuadPart - t0.QuadPart;
+        busyDraws += renderer.LastDrawn();
         if (frame.partial)
             continue;
+        busyFrames++;
         static uint64_t presents = 0;
         static const ULONGLONG startTick = GetTickCount64();
         presents++;
@@ -292,9 +303,14 @@ static void RenderThread(DisplaySettings s)
                 renderer.LastDrawn(), renderer.LastSkipped(), frame.stats.resolves, frame.frontbuffer,
                 renderer.LastPresentedFrontbuffer() ? "frontbuffer" : "target");
         if (dumping || tracing)
-            RuntimeLog("[frame] %llu: drawn %u skipped %u resolved %u presented %s (present #%llu, %.1f s)\n", (unsigned long long)frame.stats.frame,
-                renderer.LastDrawn(), renderer.LastSkipped(), renderer.LastResolved(), renderer.LastPresentedFrontbuffer() ? "frontbuffer" : "target",
-                (unsigned long long)presents, (GetTickCount64() - startTick) / 1000.0);
+        {
+            const double busyMs = 1000.0 * double(busyTicks) / double(qpf.QuadPart);
+            RuntimeLog("[frame] %llu: drawn %u skipped %u resolved %u presented %s (present #%llu, %.1f s) render %.2f ms/frame %.2f us/draw\n",
+                (unsigned long long)frame.stats.frame, renderer.LastDrawn(), renderer.LastSkipped(), renderer.LastResolved(),
+                renderer.LastPresentedFrontbuffer() ? "frontbuffer" : "target", (unsigned long long)presents, (GetTickCount64() - startTick) / 1000.0,
+                busyFrames ? busyMs / double(busyFrames) : 0.0, busyDraws ? 1000.0 * busyMs / double(busyDraws) : 0.0);
+            busyTicks = busyDraws = busyFrames = 0;
+        }
         if (GetTickCount() - lastTitle > 500)
         {
             lastTitle = GetTickCount();

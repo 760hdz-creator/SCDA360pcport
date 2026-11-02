@@ -3,6 +3,7 @@
 #include <atomic>
 #include <deque>
 #include <map>
+#include <set>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -424,6 +425,14 @@ static bool ExecutePacket(uint32_t h, const Pm4Payload& p, int depth, CpStats& s
         // SCDA_CP_FENCES=1: write fences here at parse time and never hand over partial frames
         // (the pre-occlusion-fix behaviour; A/B for partial-frame side effects).
         static const bool cpFences = getenv("SCDA_CP_FENCES") != nullptr; // =2: fences only, partial frames kept
+        // SCDA_TRACE_FENCE=1: log each fence address once (with its first value).
+        static const bool traceFence = getenv("SCDA_TRACE_FENCE") != nullptr;
+        if (traceFence)
+        {
+            static std::set<uint32_t> seen;
+            if (seen.insert(p(1)).second)
+                RuntimeLog("[fence] addr %08X phys %08X value %08X initiator %08X\n", p(1), GuestPhysical(p(1) & ~3u), value, p(0));
+        }
         if (cpFences)
             GpuStore(p(1), value);
         else
@@ -510,7 +519,12 @@ static bool ExecutePacket(uint32_t h, const Pm4Payload& p, int depth, CpStats& s
             Frames().FlushOpenNow();
         ULONGLONG now = GetTickCount64();
         if (!done && !g_waitSince)
+        {
             g_waitSince = now;
+            TimelineEvent('W', p(1), p(2));
+        }
+        if (done && g_waitSince)
+            TimelineEvent('w', p(1));
         if (!done)
             for (int i = 0; i < 4; i++)
                 g_stalledWait[i] = p(i);
@@ -537,6 +551,7 @@ static bool ExecutePacket(uint32_t h, const Pm4Payload& p, int depth, CpStats& s
         return true;
     case kOpInterrupt:
     {
+        TimelineEvent('I', p(0));
         st.interrupts++;
         BumpEpoch();
         std::lock_guard lock(g_sinkMutex);
@@ -636,8 +651,19 @@ void CommandProcessorStart()
                     (unsigned long long)st.interrupts, (unsigned long long)Frames().Partials(), line.c_str());
             }
             uint64_t before = st.packets;
+            static bool idle = false;
             if (!CommandProcessorTick(&st) || st.packets == before)
+            {
+                if (!idle)
+                    TimelineEvent('S');
+                idle = true;
                 Sleep(1);
+            }
+            else if (idle)
+            {
+                TimelineEvent('s');
+                idle = false;
+            }
         }
     }).detach();
 }

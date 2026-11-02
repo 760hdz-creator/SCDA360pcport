@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <map>
+#include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -113,4 +116,106 @@ void ProfilerStart()
     if (const char* colon = strchr(spec, ':'))
         duration = unsigned(atoi(colon + 1));
     std::thread(Profile, start, duration).detach();
+}
+
+// SCDA_WATCH_WRITE=<guest hex>[,<guest hex>][:<max hits>]: hardware write watchpoints (DR0-DR3, one dword
+// each) on every thread; each hit logs the writing host function chain (recompiled sub_ names = guest
+// call chain) and the new value. Physical aliases are separate host views: list each alias you need.
+static uint32_t g_watchAddr[4];
+static int g_watchCount;
+static std::atomic<int> g_watchHits;
+static int g_watchMax = 40;
+
+static LONG CALLBACK WatchHandler(EXCEPTION_POINTERS* e)
+{
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
+        return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* c = e->ContextRecord;
+    const DWORD64 dr6 = c->Dr6;
+    if (!(dr6 & 0xF))
+        return EXCEPTION_CONTINUE_SEARCH;
+    c->Dr6 = 0;
+    if (g_watchHits.fetch_add(1) >= g_watchMax)
+        return EXCEPTION_CONTINUE_EXECUTION;
+    static std::once_flag symInit;
+    std::call_once(symInit, [] { SymSetOptions(SYMOPT_UNDNAME); SymInitialize(GetCurrentProcess(), nullptr, TRUE); });
+    std::string chain;
+    CONTEXT walk = *c;
+    for (int depth = 0; depth < 8 && walk.Rip; depth++)
+    {
+        alignas(SYMBOL_INFO) char buf[sizeof(SYMBOL_INFO) + 128];
+        auto* sym = (SYMBOL_INFO*)buf;
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 127;
+        DWORD64 disp = 0;
+        chain += SymFromAddr(GetCurrentProcess(), walk.Rip, &disp, sym) ? sym->Name : "?";
+        chain += " < ";
+        DWORD64 imageBase = 0;
+        PRUNTIME_FUNCTION fn = RtlLookupFunctionEntry(walk.Rip, &imageBase, nullptr);
+        if (!fn)
+            break;
+        void* handlerData = nullptr;
+        DWORD64 establisher = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, walk.Rip, fn, &walk, &handlerData, &establisher, nullptr);
+    }
+    for (int i = 0; i < g_watchCount; i++)
+        if (dr6 >> i & 1)
+            RuntimeLog("[watch] tid %lu write %08X = %08X (BE) by %s\n", GetCurrentThreadId(), g_watchAddr[i],
+                _byteswap_ulong(*(uint32_t*)GuestPtr(g_watchAddr[i])), chain.c_str());
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void WatchThread()
+{
+    std::set<DWORD> armed;
+    for (;;)
+    {
+        for (DWORD id : OtherThreads())
+        {
+            if (armed.count(id))
+                continue;
+            HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, id);
+            if (!h)
+                continue;
+            if (SuspendThread(h) != DWORD(-1))
+            {
+                CONTEXT c{};
+                c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+                if (GetThreadContext(h, &c))
+                {
+                    DWORD64* dr[4] = { &c.Dr0, &c.Dr1, &c.Dr2, &c.Dr3 };
+                    c.Dr7 = 0;
+                    for (int i = 0; i < g_watchCount; i++)
+                    {
+                        *dr[i] = DWORD64(GuestPtr(g_watchAddr[i]));
+                        c.Dr7 |= (1ull << (i * 2)) | (0b1101ull << (16 + i * 4)); // local enable, write, 4 bytes
+                    }
+                    SetThreadContext(h, &c);
+                }
+                ResumeThread(h);
+            }
+            CloseHandle(h);
+            armed.insert(id);
+        }
+        Sleep(200);
+    }
+}
+
+void WatchStart()
+{
+    const char* spec = getenv("SCDA_WATCH_WRITE");
+    if (!spec)
+        return;
+    for (const char* p = spec; *p && g_watchCount < 4;)
+    {
+        g_watchAddr[g_watchCount++] = uint32_t(strtoul(p, nullptr, 16)) & ~3u;
+        p += strcspn(p, ",:");
+        if (*p != ',')
+            break;
+        p++;
+    }
+    if (const char* colon = strchr(spec, ':'))
+        g_watchMax = atoi(colon + 1);
+    AddVectoredExceptionHandler(1, WatchHandler);
+    std::thread(WatchThread).detach();
 }
