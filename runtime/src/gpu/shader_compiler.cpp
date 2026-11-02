@@ -161,7 +161,7 @@ void PrecompileShaders(const std::vector<const ShaderBlob*>& blobs, const std::f
             if (b && !g_compiled.count(b->hash) && seen.insert(b->hash).second)
                 todo.push_back(b);
     }
-    if (todo.size() < 2 || getenv("SCDA_HLSL_OVERRIDE"))
+    if (todo.size() < 2 || getenv("SCDA_HLSL_OVERRIDE") || getenv("SCDA_DUMP_HLSL")) // both only in Compile
         return;
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<std::unique_ptr<CompiledShader>> out(todo.size());
