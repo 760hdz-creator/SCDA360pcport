@@ -232,9 +232,16 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Clear colour:** the mask starts (0, 1, 1, 1) (AliasedClearColor, depth 1), so additive alpha saturates and B is
   flat. `SCDA_ALIAS_RAW_Z=1` (depth 0) darkens the whole stairwell without a visible character shadow and is known to
   darken Kinshasa's ground: not a fix on its own. Fix the compare first, then revisit.
-- **Next:** caster PS writes its own texel u (`iPos.x * g_PositionScale.x / 1024`), receiver writes (sampled, own UV):
-  match = UV fine, suspect the caster depth state (GEQUAL, zs -1 / zo 1, depth clear of bases 0x340 / 0xE0; 04020118
-  alias-clears 08000230). Mismatch = viewport / window offset / pitch 1040 vs 1024. Also explain the R-only writes.
+- **2026-11-02 result: the stairwell repro (frame 1600) is NOT a bug.** Probes (`_run/shadow/mk{dbg2,probe,uv,exp,plane,pos}.py`,
+  `run.sh`, `cmp.py`) cleared the emulation: caster/receiver c2.x equal, light plane c20 == c24 (w and |n|), sampled UV ==
+  caster texel, caster expected UV == receiver UV. Tap ~0.5 x ref is a real occluder: light 1 comes in through a window and
+  a 10-index mesh (ib 057171F6, caster draw ~112, VS a9c616aa) fills the opening in the map. `SCDA_SKIP_IB=057171F6/a9c616aa1e646735`
+  lights the mask (window-grid light on the right wall, Sam's shadow), but the 360 ref (`_run/ref360/hq1.mp4` ~40 s, same
+  view, `_run/shadow/ref/cmp.png`) shows no window light there either: the occlusion is correct.
+- **Still open:** with the mask lit (skip-ib run) the final frame did not change at all (`_run/shadow/ab_skip.png`), so the
+  mask may not reach the screen (clear alpha 1 + ONE/ONE saturating, then PS cf73f1b6 moves mask A into B). Next: a repro
+  where the 360 clearly shows a character shadow (wooden room ~148 s), then A/B the mask path there.
+- **Tool:** `SCDA_SKIP_IB=<ib>[/<vs>][,..]` skips one mesh (optionally in one pass only).
 
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 

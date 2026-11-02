@@ -1824,7 +1824,22 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     // skipped instead of finding why its input is transparent on the console. SCDA_SCOPE_BAND=1 draws it.
     constexpr uint64_t kScopeBandPs = 0x3a7a1a91e12b339aull;
     static const bool keepScopeBand = getenv("SCDA_SCOPE_BAND") != nullptr;
-    const bool skipped = (d.ps && d.ps->hash == kScopeBandPs && !keepScopeBand) || (d.vs && d.ps &&
+    // SCDA_SKIP_IB=<ib hex>[/<vs hash hex>][,..]: skip draws with that index base (and VS if given), e.g.
+    // one mesh in one pass (debug: is this caster supposed to be in the shadow map?).
+    static const std::vector<std::pair<uint32_t, uint64_t>> skipIbs = []
+    {
+        std::vector<std::pair<uint32_t, uint64_t>> v;
+        for (const char* p = getenv("SCDA_SKIP_IB"); p && *p; p += strcspn(p, ",") + (p[strcspn(p, ",")] ? 1 : 0))
+        {
+            char* e = nullptr;
+            const uint32_t ib = uint32_t(strtoul(p, &e, 16));
+            v.push_back({ ib, *e == '/' ? strtoull(e + 1, nullptr, 16) : 0 });
+        }
+        return v;
+    }();
+    const bool skipIb = std::any_of(skipIbs.begin(), skipIbs.end(),
+        [&](const auto& s) { return s.first == d.indexBase && (!s.second || (d.vs && d.vs->hash == s.second)); });
+    const bool skipped = skipIb || (d.ps && d.ps->hash == kScopeBandPs && !keepScopeBand) || (d.vs && d.ps &&
         std::find_if(skipShaders.begin(), skipShaders.end(), [&](uint64_t h) { return h == d.vs->hash || h == d.ps->hash; }) != skipShaders.end()) ||
         (clean && d.vs && d.ps && d.vs->hash == kGoggleOverlayVs && d.ps->hash == kGoggleOverlayPs);
     // Fetch slot to replace by its 1x1 average, -1 = none.
