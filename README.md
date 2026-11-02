@@ -6,7 +6,13 @@
 
 **Splinter Cell: Double Agent (Xbox 360) running natively on Windows. No emulator.**
 
-![status](https://img.shields.io/badge/status-game%20complete%2C%20polishing-brightgreen)
+[![Download](https://img.shields.io/badge/Download-SCDA__Setup.exe-2ea44f?style=for-the-badge&logo=github)](https://github.com/8gramlabs/SCDA360pcport/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/8gramlabs/SCDA360pcport/total?style=for-the-badge&label=downloads&color=2ea44f)](https://github.com/8gramlabs/SCDA360pcport/releases)
+
+[![release](https://img.shields.io/github/v/release/8gramlabs/SCDA360pcport?label=latest%20release)](https://github.com/8gramlabs/SCDA360pcport/releases/latest)
+![status](https://img.shields.io/badge/status-playable%2C%20visual%20bugs%20known-yellowgreen)
+[![Report a bug](https://img.shields.io/badge/report-a%20bug-red?logo=github)](https://github.com/8gramlabs/SCDA360pcport/issues)
+[![Ideas](https://img.shields.io/badge/share-ideas-blueviolet?logo=github)](https://github.com/8gramlabs/SCDA360pcport/discussions/categories/ideas)
 ![platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![renderer](https://img.shields.io/badge/renderer-Direct3D%2011-informational)
 ![license](https://img.shields.io/badge/license-GPL--3.0-green)
@@ -150,6 +156,11 @@ Open an [issue](https://github.com/8gramlabs/SCDA360pcport/issues) and include:
 - **Your log file**: `scda.log` in your install folder, next to `scda.exe`. It's replaced every time you start the
   game, so copy it right after the bug happens.
 - Your `%LOCALAPPDATA%\SCDARecomp\settings.ini`, if you changed any settings.
+
+## Ideas
+
+Have an idea or a feature you'd like to see? Post it in [Ideas](https://github.com/8gramlabs/SCDA360pcport/discussions/categories/ideas).
+Bugs go in [Issues](https://github.com/8gramlabs/SCDA360pcport/issues) (see above).
 
 ## Coming next
 
