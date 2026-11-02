@@ -213,6 +213,29 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** a non-zero aliased clear also clears the whole host colour target (`SCDA_ALIAS_QUAD_ONLY=1` for A/B).
   Verified `_run/st/` (NY 1500/2400/2600, Hotel, Kinshasa01: no band).
 
+## OPEN. HQ_01_A: no character shadows (issue #6) (2026-11-02)
+
+- **Symptom (user shot, 360 ref `_run/ref360/hq1.mp4` ~148 s):** characters cast no shadow in the HQ rooms.
+- **Repro:** `00_HQ_01_A.launch` + `SCDA_AUTOPRESS=1250:A,1350:A` (skips "Undercover guidelines"), frame 1600
+  (~3360 draws). `SCDA_TRACE_RESOLVE=1600` -> `_run/shadow/rtrace1600.log`.
+- **Pipeline:** light 1: casters (VS a9c616aa/a6763477, PS 47d032be writes linear light depth to R) into 32F
+  surf 10000410 -> resolve @128 to 00DB2000 (1024). Mask draws 1005-1225 (PS b5531808, 9-tap compare `tap >= ref`,
+  lit = c2.y 0.8, shadow = c2.x 0, average c255.x = 1/9; colour replace, alpha ONE/ONE) into 0A000280 base 1C0.
+  Light 2: casters into 08000230 -> resolve @1226 to 00DB2000 (512), mask draws 1226-1238 (VS 537ca434). Then PS
+  cf73f1b6 writes (mask.R, c0.w, mask.A, c0.w): the mask alpha becomes B.
+- **Ruled out:** storage/resolve (caster PS forced to 0.5 reads back 0.5); constants (caster c20 == receiver c24, the
+  same light depth plane; receiver UV rows c25/c26 = 0.5 x caster clip x/y + 0.5 w, exact).
+- **Evidence:** debug overrides `_run/shadow/mkdbg.py` (`SCDA_HLSL_OVERRIDE=_run/shadow/dbg_<v>`): HQ light 1 has 0 of
+  9 taps passing on almost every pixel, tap ~0.25 vs ref ~0.52 (ratio ~0.486, constant). Kinshasa01, same PS, partly
+  passes (tap ~ ref on ~19k px). HQ data also shows the mask draws changing only R although RB_COLOR_MASK is 0xF:
+  unexplained.
+- **Clear colour:** the mask starts (0, 1, 1, 1) (AliasedClearColor, depth 1), so additive alpha saturates and B is
+  flat. `SCDA_ALIAS_RAW_Z=1` (depth 0) darkens the whole stairwell without a visible character shadow and is known to
+  darken Kinshasa's ground: not a fix on its own. Fix the compare first, then revisit.
+- **Next:** caster PS writes its own texel u (`iPos.x * g_PositionScale.x / 1024`), receiver writes (sampled, own UV):
+  match = UV fine, suspect the caster depth state (GEQUAL, zs -1 / zo 1, depth clear of bases 0x340 / 0xE0; 04020118
+  alias-clears 08000230). Mismatch = viewport / window offset / pitch 1040 vs 1024. Also explain the R-only writes.
+
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 
 - **Symptom:** after the scope-band fix (34638bd) all sunlit ground in Kinshasa was dark, Sam cast no shadow and floor
