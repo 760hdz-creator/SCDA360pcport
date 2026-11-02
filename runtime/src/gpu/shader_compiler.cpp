@@ -1,10 +1,15 @@
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
+#include <runtime.h>
 #include <gpu/draw_state.h>
 #include <gpu/shader_compiler.h>
 #include <gpu/xenos/translate.h>
@@ -143,6 +148,73 @@ const CompiledShader& GetCompiledShader(const ShaderBlob& blob, const std::files
     if (shader->ok)
         g_readyCount++;
     return *g_compiled.emplace(blob.hash, std::move(shader)).first->second;
+}
+
+void PrecompileShaders(const std::vector<const ShaderBlob*>& blobs, const std::filesystem::path& cacheDir)
+{
+    // Blobs not in memory yet (deduplicated). Overrides go through GetCompiledShader as usual.
+    std::vector<const ShaderBlob*> todo;
+    {
+        std::lock_guard lock(g_mutex);
+        std::unordered_set<uint64_t> seen;
+        for (const ShaderBlob* b : blobs)
+            if (b && !g_compiled.count(b->hash) && seen.insert(b->hash).second)
+                todo.push_back(b);
+    }
+    if (todo.size() < 2 || getenv("SCDA_HLSL_OVERRIDE"))
+        return;
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::unique_ptr<CompiledShader>> out(todo.size());
+    std::atomic<size_t> next{ 0 };
+    std::atomic<uint32_t> compiled{ 0 }, failed{ 0 };
+    auto worker = [&]
+    {
+        for (size_t i; (i = next++) < todo.size();)
+        {
+            auto shader = std::make_unique<CompiledShader>();
+            const std::filesystem::path path = CachePath(*todo[i], cacheDir);
+            if (LoadCached(*todo[i], path, shader->bytecode))
+                shader->ok = true;
+            else
+            {
+                compiled++;
+                const char* stage = todo[i]->type == ShaderType::Pixel ? "ps" : "vs";
+                TranslateResult t = TranslateShader(*todo[i]);
+                std::string err;
+                if (t.ok)
+                    shader->bytecode = CompileHlsl(t.hlsl, todo[i]->type == ShaderType::Pixel, &err);
+                shader->ok = !shader->bytecode.empty();
+                if (!shader->ok)
+                {
+                    failed++;
+                    printf("[shader] %016llx.%s: %s failed: %s\n", (unsigned long long)todo[i]->hash, stage, t.ok ? "compile" : "translate",
+                        t.ok ? err.c_str() : t.error.c_str());
+                }
+                else
+                    StoreCached(*todo[i], path, shader->bytecode);
+            }
+            out[i] = std::move(shader);
+        }
+    };
+    const size_t threads = std::min<size_t>(todo.size(), std::max(1u, std::thread::hardware_concurrency() - 1));
+    std::vector<std::thread> pool;
+    for (size_t i = 1; i < threads; i++)
+        pool.emplace_back(worker);
+    worker();
+    for (auto& t : pool)
+        t.join();
+    std::lock_guard lock(g_mutex);
+    g_compileCount += compiled;
+    g_failedCount += failed;
+    for (size_t i = 0; i < todo.size(); i++)
+    {
+        if (out[i]->ok)
+            g_readyCount++;
+        g_compiled.emplace(todo[i]->hash, std::move(out[i]));
+    }
+    if (compiled)
+        RuntimeLog("[shader] precompiled %u (of %zu new) on %zu threads in %.0f ms\n", compiled.load(), todo.size(), threads,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
 std::bitset<96> ShaderVertexFetchSlots(const ShaderBlob& blob)

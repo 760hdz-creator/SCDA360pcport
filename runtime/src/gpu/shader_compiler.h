@@ -16,6 +16,10 @@ struct CompiledShader
 // Failures are cached too (logged once). Returned references stay valid until ShaderCompilerResetMemory.
 const CompiledShader& GetCompiledShader(const ShaderBlob& blob, const std::filesystem::path& cacheDir);
 
+// Translates + compiles the blobs not in memory yet on several threads (disk hits just load), so a
+// frame with many new shaders stalls once for the slowest instead of for their sum.
+void PrecompileShaders(const std::vector<const ShaderBlob*>& blobs, const std::filesystem::path& cacheDir);
+
 // Vertex fetch constant slots the vertex shader reads (translated once per blob, cached).
 std::bitset<96> ShaderVertexFetchSlots(const ShaderBlob& blob);
 // Texture fetch constant slots (bit n = slot n) the shader samples (translated once per blob, cached).

@@ -3019,6 +3019,10 @@ void D3D11Renderer::ApplyScale(uint32_t scale)
             continue;
         }
         PostPass(old.srv.Get(), view.Get(), td.Width, td.Height, 4, false);
+        // The texture is now scale x its guest size: record it, so a later resolve from a native-size
+        // source (TargetScale 1: glow/bloom chain) remakes it instead of copying its 1x rect into the
+        // top-left corner (users: bloom box / shrunk ghost image top-left after a live Scale change).
+        old.scale = scale;
         old.texture = tex;
         old.srv = srv;
         old.uav = uav;
@@ -3119,6 +3123,21 @@ void D3D11Renderer::Present(const Frame& frame)
         // last RT0 instead of the frontbuffer (bisecting which pass draws what).
         static const size_t drawLimit = getenv("SCDA_DRAW_LIMIT") ? size_t(atoll(getenv("SCDA_DRAW_LIMIT"))) : SIZE_MAX;
         PollQueries();
+        // New shaders of this frame compile in parallel up front (a cold cache after an install or a
+        // translator bump hitched once per shader, serially, mid-frame: users' random fps drops).
+        {
+            static const std::filesystem::path cacheDir = DefaultShaderCacheDir();
+            std::vector<const ShaderBlob*> blobs;
+            for (const auto& d : frame.draws)
+            {
+                if (d.vs && !r.vs.count(d.vs->hash))
+                    blobs.push_back(d.vs);
+                if (d.ps && !r.ps.count(d.ps->hash))
+                    blobs.push_back(d.ps);
+            }
+            if (blobs.size() > 1)
+                PrecompileShaders(blobs, cacheDir);
+        }
         size_t next = 0, nextQuery = 0, nextFence = 0;
         for (size_t i = 0; i <= std::min(frame.draws.size(), drawLimit); i++)
         {
