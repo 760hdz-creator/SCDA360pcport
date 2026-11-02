@@ -260,10 +260,11 @@ public:
         m_open.stats.frame = m_next++;
         AnswerLateQueriesLocked();
         if (getenv("SCDA_TRACE_SNAP") && m_open.stats.frame % 100 == 0)
-            RuntimeLog("[snap] frame %llu: skip %llu cmp %llu (%llu KB) diff %llu (%llu KB) copy %llu (%llu KB)\n",
+            RuntimeLog("[snap] frame %llu: skip %llu cmp %llu (%llu KB) diff %llu (%llu KB) copy %llu (%llu KB) regs %zu draws %zu\n",
                 (unsigned long long)m_open.stats.frame, statSkip, statCmp, statCmpBytes >> 10, statDiff, statDiffBytes >> 10, statCopy,
-                statCopyBytes >> 10);
+                statCopyBytes >> 10, m_open.regWrites.size(), m_open.draws.size());
         statSkip = statCmp = statCmpBytes = statDiff = statDiffBytes = statCopy = statCopyBytes = 0;
+        m_handOvers++;
         m_done.push_back(std::move(m_open));
         m_open = Frame{};
         m_latest.clear();
@@ -317,6 +318,8 @@ public:
         std::lock_guard lock(m_mutex);
         return m_partials;
     }
+    // Frames and partial frames closed so far (lock-free; changes when the open frame starts over).
+    uint32_t HandOvers() const { return m_handOvers.load(std::memory_order_relaxed); }
     uint64_t DroppedDraws() const
     {
         std::lock_guard lock(m_mutex);
@@ -334,6 +337,7 @@ private:
         m_partialDraws += m_open.stats.draws;
         m_partialResolves += m_open.stats.resolves;
         m_partials++;
+        m_handOvers++;
         m_done.push_back(std::move(m_open));
         m_open = Frame{};
         m_latest.clear();
@@ -431,6 +435,7 @@ private:
     uint64_t m_partials = 0;
     std::atomic<bool> m_cpIdle = false;
     std::atomic<uint32_t> m_unanswered = 0;
+    std::atomic<uint32_t> m_handOvers = 0; // frames + partial frames closed (HandOvers)
     struct Provisional
     {
         uint32_t address, generation;

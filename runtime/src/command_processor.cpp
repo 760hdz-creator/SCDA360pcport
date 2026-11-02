@@ -75,6 +75,13 @@ static std::vector<RegisterWrite> g_pendingWrites; // writes since the last draw
 // Bumped on every write the CPU can observe (see FrameQueue::SetEpoch).
 static uint64_t g_epoch = 1;
 static void BumpEpoch();
+FrameQueue& Frames();
+// Constant registers (ALU, fetch, bool/loop: 0x4000-0x4FFF): the FrameQueue::HandOvers() value when
+// each was last put in the write log. D3D rewrites every constant per draw and ~80% are unchanged
+// (newyork_02: ~1.2M of ~1.5M writes per frame). The renderer replays the log in order, so an
+// unchanged value adds nothing; the first write of each constant in a frame is still logged, so a
+// frame's log alone also carries every constant it sets. SCDA_NO_REG_DEDUP=1 logs every write.
+static uint32_t g_constLogged[0x1000];
 static void SetGpuRegister(uint32_t index, uint32_t v)
 {
     index &= 0x7FFF;
@@ -91,6 +98,15 @@ static void SetGpuRegister(uint32_t index, uint32_t v)
             RuntimeLog("[gamma] reg %04X = %08X\n", index, v);
     }
     GuestStore32(kGpuRegBase + index * 4, v);
+    static const bool noDedup = getenv("SCDA_NO_REG_DEDUP") != nullptr;
+    if (const uint32_t c = index - kRegAluConstants; c < 0x1000 && !noDedup)
+    {
+        static const FrameQueue& frames = Frames();
+        const uint32_t frame = frames.HandOvers() + 1; // never 0, the array's initial value
+        if (g_shadow[index] == v && g_constLogged[c] == frame)
+            return; // constants are not scratch or display registers: nothing else to do
+        g_constLogged[c] = frame;
+    }
     g_shadow.Set(index, v);
     g_pendingWrites.push_back({ index, v });
     // SCRATCH_REG0-7: mirrored to SCRATCH_ADDR + 4*i for SCRATCH_UMSK bits (D3D polls that memory).
@@ -191,6 +207,8 @@ static void SubmitDraw(DrawCall d)
         if (GuestRangeReadable(p, d.indexBytes))
             d.indexSnapshot = int32_t(Frames().AddVertexData(MemoryRangeKey({ d.indexBase & 0x1FFFFFFF, d.indexBytes }), p, d.indexBytes));
     }
+    if (RegDedupCheck())
+        d.constantsHash = ConstantsHash(g_shadow);
     Frames().AddDraw(std::move(d), g_pendingWrites);
 }
 
@@ -215,6 +233,7 @@ static void ResetForRelaunch()
     memset(GuestPtr(kGpuRegBase), 0, 0x8000 * 4);
     g_shadow.Clear();
     g_pendingWrites.clear();
+    memset(g_constLogged, 0, sizeof(g_constLogged));
     g_pendingWrites.push_back({ kRegClearAll, 0 });
     for (auto& w : g_stalledWait)
         w = 0;

@@ -59,7 +59,23 @@ struct DrawCall
     const ShaderBlob* vs = nullptr;
     const ShaderBlob* ps = nullptr;
     uint32_t regWritesEnd = 0;                  // Frame::regWrites[0, regWritesEnd) precede this draw
+    uint64_t constantsHash = 0;                 // SCDA_REG_DEDUP_CHECK: ConstantsHash of the CP's registers
 };
+
+// SCDA_REG_DEDUP_CHECK=1: the renderer checks that its replayed constant registers (0x4000-0x4FFF)
+// equal the command processor's at each draw (the CP drops unchanged rewrites from the log).
+inline bool RegDedupCheck()
+{
+    static const bool on = getenv("SCDA_REG_DEDUP_CHECK") != nullptr;
+    return on;
+}
+inline uint64_t ConstantsHash(const RegisterFile& regs)
+{
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (uint32_t i = 0x4000; i < 0x5000; i++)
+        h = (h ^ regs[i]) * 0x100000001b3ull;
+    return h;
+}
 
 // EVENT_WRITE_ZPD: an occlusion query begin or end (D3D marks ends with a sentinel in the block),
 // placed among the draws like a resolve; address = the RB_SAMPLE_COUNT_ADDR block (physical).

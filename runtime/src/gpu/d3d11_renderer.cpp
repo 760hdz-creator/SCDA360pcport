@@ -1745,6 +1745,12 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
 {
     DrawResources& r = *m_draw;
     ApplyRegisterWrites(frame, d.regWritesEnd);
+    if (RegDedupCheck() && ConstantsHash(r.regs) != d.constantsHash)
+    {
+        static uint32_t mismatches;
+        if (++mismatches <= 20 || mismatches % 1000 == 0)
+            RuntimeLog("[dedup] MISMATCH %u: present %llu draw %u\n", mismatches, m_presented, m_lastDrawn + m_lastSkipped);
+    }
     uint32_t topology = HostTopology(d.primType);
     const bool rectList = d.primType == 8;
     // Point lists draw as points expanded to sprites by pointListGs. SCDA_NO_POINT_SPRITES=1 skips them.
