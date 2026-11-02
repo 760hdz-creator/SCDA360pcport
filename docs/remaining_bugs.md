@@ -3,7 +3,7 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
-## OPEN. Okhotsk_02: open water shows moire rings / fine stripes (2026-11-02)
+## FIXED. Okhotsk_02: open water shows moire rings / fine stripes (2026-11-02)
 
 - **Symptom (user screenshot):** from the ice, the open water is covered in concentric rings and fine diagonal
   stripes; the 360 (`_run/ref/okh/x360_m4.mp4` ~650-700 s) shows dark, smooth, reflective water. Not caused by
@@ -15,8 +15,15 @@ Evidence paths under `_run/` are local only (git-ignored).
   `_run/okhblue/wres1.png`) at Scale 1 too; Scale 3 adds the large rings (`_run/okhblue/water4.png`). No mips on
   the 360 either (fetch mip level 0). Clamping k_16_16 UNORM resolves (`IsFloatTextureFormat` lists 25/26, so
   resolves to them skip the saturate) did not help and was reverted.
-- **Next:** the sim passes on 020000A0 (draws ~240-260 of the frame): suspect a half-texel offset or neighbour
-  step in the 128x128 sim (alternating pattern), and that scaled targets break the sim's texel steps.
+- **Cause:** internal resolution scale. The ripple sim (PS cc5a3f0d: explicit wave equation, point-sampled
+  neighbours 1/128 apart, fetch dword3 01001691) ran on a 256/384-texel host target; the upscaled grid splits
+  into independent sub-lattices that drift into a checkerboard. True Scale 1 is clean (water high-frequency
+  energy flat ~1.9; Scale 2 grew 2.6 -> 6.9 over 140 frames). Note `Upscaling=Native` overrides `Scale`.
+- **Fix:** `TargetScale`: EDRAM surfaces with sample pitch <= 160 (ripple sim / glow 020000A0, luminance chain
+  80) render at scale 1 (targets, viewport, positionScale, resolve copies, query counts, pixel watch).
+  `SCDA_SCALE_SMALL_TARGETS=1` = old. Scale 2/3 water energy now flat ~1.8/2.2 (`_run/okhblue/w7crop.png`).
+  Regression at Scale 3 old/new (`_run/okhblue/reg.png`): Intro 1500/2000, Jail 1620, Kinshasa01 2400,
+  Okhotsk surfacing 700/900 within 1-3 levels.
 
 ## FIXED (workaround). Okhotsk_02: screen washes pale blue / cyan after surfacing (2026-11-01)
 

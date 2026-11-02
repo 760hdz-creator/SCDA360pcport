@@ -483,6 +483,7 @@ struct DrawResources
         ComPtr<ID3D11ShaderResourceView> srv;
         ComPtr<ID3D11UnorderedAccessView> uav; // float formats: saturating copies (kSaturateCs)
         uint32_t width = 0, height = 0; // guest pixels; the texture is scale times larger
+        uint32_t scale = 0;             // host texels per guest pixel of the texture (TargetScale of its source)
         DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; // the source target's
         uint32_t rowBytes = 0; // guest bytes per row (RB_COPY_DEST_INFO format x width)
         uint32_t destFormat = 0; // RB_COPY_DEST_INFO bits 7-12
@@ -953,6 +954,17 @@ static ID3D11ShaderResourceView* ResolvedView(ID3D11Device* device, ID3D11Device
     return crop.srv.Get();
 }
 
+// Internal resolution scale of an EDRAM surface by its sample pitch: small render-to-texture surfaces
+// (pitch <= 160 samples: the 128x128 water ripple simulation, glow/luminance chains) stay native.
+// Scaled, Okhotsk's point-sampled ripple sim (neighbours 1/128 apart) split into independent
+// sub-lattices and blew up into a checkerboard: moire rings on the water. Colour and depth of a
+// surface share the sample pitch, so they always agree. SCDA_SCALE_SMALL_TARGETS=1: old (all scaled).
+static uint32_t TargetScale(const DrawResources& r, uint32_t samplePitch)
+{
+    static const bool scaleAll = getenv("SCDA_SCALE_SMALL_TARGETS") != nullptr;
+    return !scaleAll && samplePitch <= 160 ? 1 : r.scale;
+}
+
 static ColorTarget* ColorTargetFor(ID3D11Device* device, ID3D11DeviceContext* context, DrawResources& r, uint32_t key)
 {
     if (auto it = r.colorTargets.find(key); it != r.colorTargets.end())
@@ -960,8 +972,8 @@ static ColorTarget* ColorTargetFor(ID3D11Device* device, ID3D11DeviceContext* co
     if (r.colorTargets.size() >= kMaxEdramTargets)
         return nullptr;
     D3D11_TEXTURE2D_DESC td{};
-    td.Width = EdramKeySamplePitch(key) * r.scale;
-    td.Height = EdramSampleRows(EdramKeySamplePitch(key)) * r.scale;
+    td.Width = EdramKeySamplePitch(key) * TargetScale(r, EdramKeySamplePitch(key));
+    td.Height = EdramSampleRows(EdramKeySamplePitch(key)) * TargetScale(r, EdramKeySamplePitch(key));
     td.MipLevels = td.ArraySize = 1;
     td.Format = DXGI_FORMAT(HostColorFormat((key >> 12) & 0xF));
     td.SampleDesc.Count = 1;
@@ -985,8 +997,8 @@ static ID3D11DepthStencilView* DepthTargetFor(ID3D11Device* device, ID3D11Device
     if (r.depthTargets.size() >= kMaxEdramTargets)
         return nullptr;
     D3D11_TEXTURE2D_DESC td{};
-    td.Width = EdramKeySamplePitch(key) * r.scale;
-    td.Height = EdramSampleRows(EdramKeySamplePitch(key)) * r.scale;
+    td.Width = EdramKeySamplePitch(key) * TargetScale(r, EdramKeySamplePitch(key));
+    td.Height = EdramSampleRows(EdramKeySamplePitch(key)) * TargetScale(r, EdramKeySamplePitch(key));
     td.MipLevels = td.ArraySize = 1;
     td.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
     td.SampleDesc.Count = 1;
@@ -1186,8 +1198,9 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     const uint32_t surface = regs[kRegRbSurfaceInfo];
     const SurfaceLayout layout = EdramSurfaceLayout(surface);
     SharedConstants shared = BuildSharedConstants(regs, layout.pitch, layout.sampleRows / layout.samplesY);
-    shared.positionScale[0] = 1.0f / float(r.scale * layout.samplesX);
-    shared.positionScale[1] = 1.0f / float(r.scale * layout.samplesY);
+    const uint32_t targetScale = TargetScale(r, layout.samplePitch);
+    shared.positionScale[0] = 1.0f / float(targetScale * layout.samplesX);
+    shared.positionScale[1] = 1.0f / float(targetScale * layout.samplesY);
 
     // Render targets: RT0, RT1-3 with a colour mask (MRT), and the depth surface.
     static constexpr uint32_t kInfo[4] = { kRegRbColorInfo, kRegRbColor1Info, kRegRbColor2Info, kRegRbColor3Info };
@@ -1217,7 +1230,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     {
         m_context->OMSetRenderTargets(count, rtvs, DepthTargetFor(m_device, m_context, r, keys[4]));
         r.srvShadow = false;
-        D3D11_VIEWPORT vp{ 0, 0, float(layout.samplePitch * r.scale), float(layout.sampleRows * r.scale), 0, 1 };
+        D3D11_VIEWPORT vp{ 0, 0, float(layout.samplePitch * targetScale), float(layout.sampleRows * targetScale), 0, 1 };
         m_context->RSSetViewports(1, &vp);
         std::copy(keys, keys + 5, r.boundKeys);
         r.bound = true;
@@ -1911,7 +1924,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         }();
         const bool tracePs = std::find(tracePsList.begin(), tracePsList.end(), d.ps->hash) != tracePsList.end();
         if (tracePs)
-            for (uint32_t c : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 15u, 16u, 20u, 21u, 22u, 23u, 220u, 225u, 229u, 230u, 231u, 232u, 245u, 246u, 247u, 248u, 249u, 250u, 253u, 254u })
+            for (uint32_t c : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 15u, 16u, 20u, 21u, 22u, 23u, 220u, 225u, 229u, 230u, 231u, 232u, 245u, 246u, 247u, 248u, 249u, 250u, 253u, 254u })
             {
                 auto f = [&](uint32_t i) { return std::bit_cast<float>(r.regs[kRegAluConstants + 1024 + c * 4 + i]); };
                 RuntimeLog("[rtrace]   ps c%u %g %g %g %g blend %08X\n", c, f(0), f(1), f(2), f(3), r.regs[0x2201]);
@@ -2005,17 +2018,17 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                     first.push_back(v);
                 for (uint32_t v : first)
                 {
-                    if (!vb || !GuestRangeReadable(vb + v * 28, 12))
+                    if (!vb || !GuestRangeReadable(vb + v * 28, 20))
                         break;
-                    float xyz[3];
-                    for (uint32_t k = 0; k < 3; k++)
+                    float xyz[5]; // dwords 0-4 as floats (28-byte stride assumed: only v0 is exact otherwise)
+                    for (uint32_t k = 0; k < 5; k++)
                     {
                         uint32_t w;
                         memcpy(&w, vb + v * 28 + k * 4, 4);
                         w = _byteswap_ulong(w);
                         memcpy(&xyz[k], &w, 4);
                     }
-                    RuntimeLog("[rtrace]   v%u %g %g %g\n", v, xyz[0], xyz[1], xyz[2]);
+                    RuntimeLog("[rtrace]   v%u %g %g %g | %g %g\n", v, xyz[0], xyz[1], xyz[2], xyz[3], xyz[4]);
                 }
             }
             for (uint32_t slot = 0; slot < 16; slot++)
@@ -2454,7 +2467,8 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         const uint32_t wo = r.regs[kRegPaScWindowOffset];
         const bool useOffset = (r.regs[0x2205] >> 16) & 1;
         const int ox = useOffset ? int32_t(wo << 17) >> 17 : 0, oy = useOffset ? int32_t(wo << 1) >> 17 : 0;
-        const int hx = (watchX + ox) * int(r.lastLayout.samplesX * r.scale), hy = (watchY + oy) * int(r.lastLayout.samplesY * r.scale);
+        const uint32_t watchScale = TargetScale(r, r.lastLayout.samplePitch);
+        const int hx = (watchX + ox) * int(r.lastLayout.samplesX * watchScale), hy = (watchY + oy) * int(r.lastLayout.samplesY * watchScale);
         D3D11_TEXTURE2D_DESC td;
         r.last->texture->GetDesc(&td);
         static std::unordered_map<uint32_t, ComPtr<ID3D11Texture2D>> staging;
@@ -2564,7 +2578,8 @@ void D3D11Renderer::ExecuteQuery(const OcclusionQuery& q)
         if (q.end)
         {
             const SurfaceLayout l = EdramSurfaceLayout(r.regs[kRegRbSurfaceInfo]);
-            r.pendingQueries.push_back({ r.activeQuery, q.address, q.generation, GetTickCount64(), r.scale * r.scale * l.samplesX * l.samplesY, r.querySeq++ });
+            const uint32_t qs = TargetScale(r, l.samplePitch);
+            r.pendingQueries.push_back({ r.activeQuery, q.address, q.generation, GetTickCount64(), qs * qs * l.samplesX * l.samplesY, r.querySeq++ });
         }
         r.activeQuery.Reset();
     }
@@ -2672,6 +2687,7 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
         D3D11_TEXTURE2D_DESC sd;
         source->texture->GetDesc(&sd);
         const uint32_t base = res.destBase & 0x1FFFF000;
+        const uint32_t srcScale = TargetScale(r, EdramSurfaceLayout(res.surfaceInfo).samplePitch);
         if ((res.destBase & 0xFFF) && TraceResolveOnce((3ull << 60) | res.destBase))
             RuntimeLog("[resolve] dest %08X has sub-page offset %03X (dropped)\n", res.destBase, res.destBase & 0xFFF);
         if (TraceResolveOnce((4ull << 60) | res.colorInfo | (uint64_t(res.surfaceInfo & 0x3FFF) << 32)))
@@ -2697,15 +2713,22 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
                 TraceResolveOnce((5ull << 60) | (uint64_t(base) << 20) | ((it->first >> 12) & 0xFFFFF)))
                 RuntimeLog("[resolve] dest %08X fmt %u w %u inside resolve %08X fmt %u w %u rowBytes %u (+%u B) rejected: new texture\n", base,
                     (res.destInfo >> 7) & 0x3F, ResolveWidth(res), it->first, it->second.destFormat, it->second.width, it->second.rowBytes, base - it->first);
+        // A texture made at another scale (TargetScale of a different source) is not reused: this base
+        // gets its own texture at the source's scale.
+        if (dstIt != r.resolved.end() && dstIt->second.scale != srcScale)
+        {
+            dstIt = r.resolved.end();
+            dy = 0;
+        }
         if (dstIt == r.resolved.end())
         {
             uint32_t w = std::min(ResolveWidth(res), kTargetWidth), h = std::min(ResolveHeight(res), kTargetHeight);
             auto& dst = r.resolved[base];
-            if (w && h && (dst.width != w || dst.height != h || dst.format != sd.Format))
+            if (w && h && (dst.width != w || dst.height != h || dst.format != sd.Format || dst.scale != srcScale))
             {
                 D3D11_TEXTURE2D_DESC td{};
-                td.Width = w * r.scale;
-                td.Height = h * r.scale;
+                td.Width = w * srcScale;
+                td.Height = h * srcScale;
                 td.MipLevels = td.ArraySize = 1;
                 td.Format = sd.Format;
                 td.SampleDesc.Count = 1;
@@ -2721,6 +2744,7 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
                     dst.width = w;
                     dst.height = h;
                     dst.format = sd.Format;
+                    dst.scale = srcScale;
                 }
             }
             dst.rowBytes = w * TextureElementBytes((res.destInfo >> 7) & 0x3F);
@@ -2749,9 +2773,9 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
                 // Destination host texels from here on (scale per guest pixel); the source also has the
                 // surface's MSAA samples per pixel, averaged when copy_sample_select (RB_COPY_CONTROL bits
                 // 4-6) is 4+ (0-3 = that sample: sample 0 here).
-                const int32_t s = int32_t(r.scale);
+                const int32_t s = int32_t(srcScale);
                 x0 *= s, y0 *= s, x1 *= s, y1 *= s;
-                const uint32_t hostDy = dy * r.scale;
+                const uint32_t hostDy = dy * srcScale;
                 const uint32_t destFormat = (res.destInfo >> 7) & 0x3F;
                 const SurfaceLayout layout = EdramSurfaceLayout(res.surfaceInfo);
                 const bool multisampled = layout.samplesX * layout.samplesY > 1;
