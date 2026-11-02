@@ -1,0 +1,117 @@
+diff --git a/src/xenia/gpu/d3d12/d3d12_command_processor.cc b/src/xenia/gpu/d3d12/d3d12_command_processor.cc
+index 82076bc..cbe7c34 100644
+--- a/src/xenia/gpu/d3d12/d3d12_command_processor.cc
++++ b/src/xenia/gpu/d3d12/d3d12_command_processor.cc
+@@ -3334,6 +3334,16 @@ void D3D12CommandProcessor::InitializeTrace() {
+   }
+ }
+ 
++// SCDA: byte-lane sums of p[0, n); stops at the first unreadable page. Returns bytes summed.
++static size_t ScdaSumLanes(const uint8_t* p, size_t n, double sum[4]) {
++  size_t i = 0;
++  __try {
++    for (; i < n; ++i) sum[i & 3] += p[i];
++  } __except (EXCEPTION_EXECUTE_HANDLER) {
++  }
++  return i & ~size_t(3);
++}
++
+ bool D3D12CommandProcessor::IssueCopy() {
+ #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
+   SCOPE_profile_cpu_f("gpu");
+@@ -3348,7 +3358,49 @@ bool D3D12CommandProcessor::IssueCopy() {
+                                          *texture_cache_, written_address,
+                                          written_length);
+   } else {
+-    return IssueCopy_ReadbackResolvePath();
++    bool result = IssueCopy_ReadbackResolvePath();
++    // SCDA: XE_RESOLVE_LOG=<file>: one line per resolve: count, RB_COPY_CONTROL, colour info,
++    // RB_COPY_DEST_BASE, mean of each byte lane (0-3) of the first 640x360x4 bytes at the destination.
++    static FILE* scda_log = [] {
++      const char* path = std::getenv("XE_RESOLVE_LOG");
++      return path ? std::fopen(path, "w") : nullptr;
++    }();
++    if (scda_log) {
++      static uint64_t count = 0;
++      const RegisterFile& regs = *register_file_;
++      uint32_t dest = regs[XE_GPU_REG_RB_COPY_DEST_BASE];
++      uint32_t ctrl = regs[XE_GPU_REG_RB_COPY_CONTROL];
++      uint32_t src_select = ctrl & 7;
++      uint32_t info = src_select < 4
++                          ? regs[XE_GPU_REG_RB_COLOR_INFO + (src_select ? 0 : 0)]
++                          : regs[XE_GPU_REG_RB_DEPTH_INFO];
++      if (src_select == 1) info = regs[XE_GPU_REG_RB_COLOR1_INFO];
++      if (src_select == 2) info = regs[XE_GPU_REG_RB_COLOR2_INFO];
++      if (src_select == 3) info = regs[XE_GPU_REG_RB_COLOR3_INFO];
++      const uint8_t* p = memory_->TranslatePhysical(dest & 0x1FFFFFFF);
++      double sum[4] = {};
++      size_t n = 640 * 360 * 4;
++      // Only committed bytes of the destination's allocation.
++      HeapAllocationInfo scda_info;
++      VirtualHeap* scda_heap = memory_->GetPhysicalHeap();
++      if (!scda_heap ||
++          !scda_heap->QueryRegionInfo(dest & 0x1FFFFFFF, &scda_info) ||
++          !(scda_info.state & kMemoryAllocationCommit)) {
++        n = 0;
++      } else {
++        n = std::min<size_t>(n, scda_info.base_address + scda_info.region_size -
++                                    (dest & 0x1FFFFFFF)) & ~size_t(3);
++      }
++      if (!n) n = 4, p = reinterpret_cast<const uint8_t*>(&ctrl);
++      n = ScdaSumLanes(p, n, sum);
++      std::fprintf(scda_log,
++                   "%llu ctrl %08X info %08X dest %08X lanes %.1f %.1f %.1f %.1f\n",
++                   (unsigned long long)count++, ctrl, info, dest,
++                   sum[0] / (n / 4), sum[1] / (n / 4), sum[2] / (n / 4),
++                   sum[3] / (n / 4));
++      std::fflush(scda_log);
++    }
++    return result;
+   }
+ }
+ XE_NOINLINE
+diff --git a/src/xenia/kernel/xam/xam_info.cc b/src/xenia/kernel/xam/xam_info.cc
+index 50ddd1a..24f1d4c 100644
+--- a/src/xenia/kernel/xam/xam_info.cc
++++ b/src/xenia/kernel/xam/xam_info.cc
+@@ -447,6 +447,24 @@ dword_result_t XamLoaderSetLaunchData_entry(lpvoid_t data, dword_t size) {
+ }
+ DECLARE_XAM_EXPORT1(XamLoaderSetLaunchData, kNone, kSketchy);
+ 
++// SCDA: XE_LAUNCH_DATA=<file> supplies launch data when none was set (boot straight into a map).
++static void ScdaInjectLaunchData(std::vector<uint8_t>& launch_data) {
++  static bool done = false;
++  if (done || !launch_data.empty()) {
++    return;
++  }
++  done = true;
++  if (const char* path = std::getenv("XE_LAUNCH_DATA")) {
++    if (FILE* f = std::fopen(path, "rb")) {
++      std::vector<uint8_t> data(MAX_LAUNCH_DATA_SIZE);
++      data.resize(std::fread(data.data(), 1, data.size(), f));
++      std::fclose(f);
++      launch_data = std::move(data);
++      XELOGI("SCDA: launch data {} bytes from {}", launch_data.size(), path);
++    }
++  }
++}
++
+ dword_result_t XamLoaderGetLaunchDataSize_entry(lpdword_t size_ptr) {
+   if (!size_ptr) {
+     return X_ERROR_INVALID_PARAMETER;
+@@ -454,6 +472,7 @@ dword_result_t XamLoaderGetLaunchDataSize_entry(lpdword_t size_ptr) {
+ 
+   auto xam = kernel_state()->GetKernelModule<XamModule>("xam.xex");
+   auto& loader_data = xam->loader_data();
++  ScdaInjectLaunchData(loader_data.launch_data);
+   if (loader_data.launch_data.empty()) {
+     *size_ptr = 0;
+     return X_ERROR_NOT_FOUND;
+@@ -468,6 +487,7 @@ dword_result_t XamLoaderGetLaunchData_entry(lpvoid_t buffer_ptr,
+                                             dword_t buffer_size) {
+   auto xam = kernel_state()->GetKernelModule<XamModule>("xam.xex");
+   auto& loader_data = xam->loader_data();
++  ScdaInjectLaunchData(loader_data.launch_data);
+   if (loader_data.launch_data.empty()) {
+     return X_ERROR_NOT_FOUND;
+   }

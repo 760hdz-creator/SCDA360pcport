@@ -3,6 +3,42 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
+## FIXED (workaround). Okhotsk_02: screen washes pale blue / cyan after surfacing (2026-11-01)
+
+- **Symptom (user video):** surfacing at the "Use detonators to blow the ice wall" spot turns the whole frame cyan.
+  Not a regression of 6949bc4 (same with `SCDA_NO_CB_SKIP=1 SCDA_NO_FETCH_CACHE=1`). The 360 reference
+  (`_run/ref/okh/x360_m4.mp4`, 596-660 s) and Xenia show no wash.
+- **Repro:** `SCDA_LAUNCH_DATA=_run/okhblue/save.launch` (user save, Okhotsk_02 at the surface)
+  `SCDA_AUTOPRESS=600:A`, dump frame 700. Cyan from frame ~640 on.
+- **Cause:** the D3D clears before the lens-drop pass (PS 7c17e516, MRT RT0 base 0 + RT1 base 0xB8, additive
+  01060106) include 4x depth-only alias clears (`RB_MODECONTROL` 5, surface 05020140) at bases 0 and 0xB8.
+  `AliasedClearColor` writes them as depth 1 = (0, 1, 1, 1); RT1 (0xB8) keeps it, is resolved to 012A2000 and the
+  final combine (PS a5d8b762: t0 + scene + t2) adds it to the screen. Underwater (frame 580) these clears are absent.
+  Skipping a5d8b762, `SCDA_NO_DEPTH_COLOR_ALIAS=1` or `SCDA_ALIAS_RAW_Z=1` each give a clean frame.
+- **Conflict:** the clear depth 1 comes from the viewport z offset, which VTE 0x300 does not apply; the quads' z is
+  ~0 (-2^-28), and Xenia (draw_util.cc, z scale/offset disabled -> depth = z) also writes 0. Depth 0 fixes
+  Okhotsk but darkens Kinshasa01's sunlit ground (light mask 0x1C0, see the Jail entry below), while Xenia shows
+  Kinshasa lit with Sam's shadow (user check). So 0 is the hardware value and Kinshasa's lit ground depends on
+  something downstream we still get wrong. Ruled out: `RB_DEPTH_CLEAR` (always 0), clear VS 10e10ea9 (passes
+  vertex z through), skipped draws (none on Kinshasa), occlusion queries (`SCDA_QUERY_ALL_VISIBLE=1` + raw z still
+  dark, `_run/okhblue/kin.png`).
+- **Xenia check (2026-11-01, patched Xenia Canary 96ce1ac, `tools/patches/xenia_scda_probe.patch`: `XE_LAUNCH_DATA=<file>`
+  boots a map, `XE_RESOLVE_LOG=<file>` + `--readback_resolve=full` logs byte-lane means per resolve; build in
+  `external/xenia-src`, SPIR-V tools in `external/vulkan-tools/sdk` via `VULKAN_SDK`):** Xenia's Kinshasa01 mask
+  (0x1C0) = R ~0, G 193, B ~0, A 190, matching ours with raw z (R 0, G 199, B 0, A 200); current build has B 255.
+  But Xenia's alley ground has no sun and no Sam shadow (`_run/okhblue/xe_kin2.png`), while the 360 video
+  (`_run/ref360/kin.mp4`, "Retrieve plans from the camp" from ~11:30) shows strong sun and shadows. So Xenia
+  shares the raw-z result and is not ground truth here.
+- **Lever:** raw z + the default 8x8 s13 (036FA000, fetch `80400002 036FA086 0000E007 00A80C14`, bytes FF000000 =
+  (0,0,0,1) after 8in32 + zyxw) forced white relights ground, Sam and the car (`_run/okhblue/kin4.png`): all bind
+  it. The material is `min(mask.B + s13.ch + 2*oT8.x, mask.A)` (PS 63053924, mask = s15.zw).
+- **Fix (per-shader workaround):** an aliased depth-only clear marks its colour target; the lens-drop pass (PS
+  7c17e516) clears marked targets to black before drawing, any other draw unmarks them (`ExecuteDraw`).
+  `SCDA_NO_LENS_DROP_FIX=1` = old. Verified on the save (frames 580/700/900, `_run/okhblue/fix.png`); Kinshasa01
+  keeps sun and Sam's shadow.
+- **Open question:** on the 360 either mask.B ~1 (clear at depth 1 as now) or the unlit-default path differs. No
+  rule found that gives Kinshasa B 1 and Okhotsk glow 0 from the same clear registers/quad data.
+
 ## FIXED. Smeared, streaky floor textures (Kinshasa02 diamond-plate walkway) (2026-10-31)
 
 - **Symptom:** walkway texture stretched into horizontal streaks/ripples (user screenshot, Kinshasa02 start).

@@ -346,6 +346,7 @@ struct ColorTarget
     ComPtr<ID3D11RenderTargetView> rtv;
     ComPtr<ID3D11ShaderResourceView> srv;
     uint32_t width = 0, height = 0; // host texels
+    bool aliasCleared = false;      // last written by an aliased depth-only clear (see kLensDropPs)
 };
 
 // Device objects for executing draws; rebuilt with the device.
@@ -359,6 +360,7 @@ struct DrawResources
     std::unordered_map<uint32_t, ComPtr<ID3D11DepthStencilView>> depthTargets;
     uint32_t boundKeys[5] = {}; // RT0-3 + depth keys bound now; ~0u = none
     bool bound = false;         // boundKeys valid (false after the blit or a new frame)
+    ColorTarget* boundTargets[4] = {}; // RT0-3 of the last BindRegisterState (null = unused)
     // t0-t95 as bound now (VS, PS), valid while srvShadow: only changed slots are rebound. Any other
     // SRV or render target bind clears srvShadow (D3D11 silently unbinds SRVs whose resource
     // becomes a render target, so the shadow could otherwise claim a slot that is now null).
@@ -1192,6 +1194,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     uint32_t keys[5] = { ~0u, ~0u, ~0u, ~0u, EdramDepthKey(regs[kRegRbDepthInfo], surface) };
     ID3D11RenderTargetView* rtvs[4] = {};
     UINT count = 0;
+    std::fill(r.boundTargets, r.boundTargets + 4, nullptr);
     for (uint32_t n = 0; n < 4; n++)
     {
         const uint32_t key = EdramColorKey(regs[kInfo[n]], surface);
@@ -1201,6 +1204,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         {
             keys[n] = key;
             rtvs[n] = t->rtv.Get();
+            r.boundTargets[n] = t;
             count = n + 1;
             if (!n)
             {
@@ -2098,6 +2102,25 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         BindRegisterState(r.regs, r.lastTexSlots);
         r.stateDirty = false;
     }
+    // Okhotsk_02 surfacing (docs/remaining_bugs.md): the lens-drop pass (PS 7c17e516, additive into RT0
+    // base 0 + RT1 base 0xB8) follows aliased depth-only clears of both, which AliasedClearColor makes
+    // (0, 1, 1, 1); RT1 is resolved and added to the screen = full-screen cyan. The 360 shows none, but
+    // Kinshasa's light mask needs that same clear value, so this is a per-shader workaround: targets
+    // last written by an aliased clear start black for this pass. SCDA_NO_LENS_DROP_FIX=1: off.
+    static constexpr uint64_t kLensDropPs = 0x7c17e51684622942ull;
+    static const bool noLensDropFix = getenv("SCDA_NO_LENS_DROP_FIX") != nullptr;
+    const bool aliasClearDraw = DepthOnlyOverwritesColor(r.regs);
+    for (ColorTarget* t : r.boundTargets)
+    {
+        if (!t)
+            continue;
+        if (!noLensDropFix && !aliasClearDraw && t->aliasCleared && d.ps->hash == kLensDropPs)
+        {
+            static const float black[4] = {};
+            m_context->ClearRenderTargetView(t->rtv.Get(), black);
+        }
+        t->aliasCleared = aliasClearDraw;
+    }
     if (averageSlot >= 0)
     {
         const TextureFetch t = DecodeTextureFetch(r.regs, uint32_t(averageSlot));
@@ -2972,6 +2995,7 @@ void D3D11Renderer::ApplyScale(uint32_t scale)
     r.colorTargets.clear();
     r.depthTargets.clear();
     r.last = nullptr;
+    std::fill(r.boundTargets, r.boundTargets + 4, nullptr);
     r.bound = false; r.srvShadow = false;
     r.stateDirty = true;
     r.scale = m_scale = scale;
@@ -3023,6 +3047,7 @@ void D3D11Renderer::Present(const Frame& frame)
             r.resolved.clear();
             r.textureCache.clear();
             r.last = nullptr;
+            std::fill(r.boundTargets, r.boundTargets + 4, nullptr);
             r.stateDirty = true;
             r.aluDirty[0] = r.aluDirty[1] = true;
             r.sharedValid = false;
