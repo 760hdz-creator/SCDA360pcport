@@ -165,10 +165,13 @@ TEST(read_profile_settings_two_calls)
     CHECK_EQ(GuestLoad32(buf), 2u);            // setting count
     CHECK_EQ(GuestLoad32(buf + 4), buf + 8);   // settings
     const uint32_t s0 = buf + 8, s1 = s0 + 40;
-    CHECK_EQ(GuestLoad32(s0 + 0), 0u);         // source: none (the game's defaults)
+    // Vibration unset: dashboard default on (source 1, value 3). Source 0 reads as 0 = rumble off (#4).
+    CHECK_EQ(GuestLoad32(s0 + 0), 1u);
     CHECK_EQ(GuestLoad32(s0 + 0x08), 0u);      // user index
     CHECK_EQ(GuestLoad32(s0 + 0x10), 0x10040003u);
     CHECK_EQ(g_base[s0 + 0x18], 1);            // data type int32
+    CHECK_EQ(GuestLoad32(s0 + 0x20), 3u);
+    CHECK_EQ(GuestLoad32(s1 + 0), 0u);         // source: none (the game's defaults)
     CHECK_EQ(GuestLoad32(s1 + 0x10), 0x63E83FFFu);
     CHECK_EQ(g_base[s1 + 0x18], 6);            // binary
     CHECK_EQ(GuestLoad32(s1 + 0x20), 0u);      // size 0

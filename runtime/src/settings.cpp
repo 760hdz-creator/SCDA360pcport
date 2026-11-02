@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <settings.h>
+#include <runtime.h>
 
 static std::string Lower(std::string s)
 {
@@ -144,6 +145,67 @@ UpdateSettings LoadUpdateSettings(const std::filesystem::path& ini)
             s.repo = value;
     });
     return s;
+}
+
+// X_LANGUAGE ids the SCDA discs carry text for (Packages\Texts\ENG/FRA/DEU/ESP/ITA; no Japanese text).
+static const struct { uint32_t id; const char* name; } kLanguages[] = {
+    { 1, "English" }, { 3, "German" }, { 4, "French" }, { 5, "Spanish" }, { 6, "Italian" },
+};
+
+const char* GameLanguageName(uint32_t id)
+{
+    for (auto& l : kLanguages)
+        if (l.id == id)
+            return l.name;
+    return nullptr;
+}
+
+static uint32_t ParseLanguage(std::string value)
+{
+    for (auto& c : value)
+        c = char(tolower(uint8_t(c)));
+    for (auto& l : kLanguages)
+    {
+        std::string n = l.name;
+        for (auto& c : n)
+            c = char(tolower(uint8_t(c)));
+        if (value == n)
+            return l.id;
+    }
+    const uint32_t n = uint32_t(strtoul(value.c_str(), nullptr, 10));
+    return GameLanguageName(n) ? n : 0;
+}
+
+uint32_t GameLanguage()
+{
+    static const uint32_t id = []
+    {
+        uint32_t v = 0;
+        if (const char* env = getenv("SCDA_LANGUAGE"))
+            v = ParseLanguage(env);
+        else
+            ForEachSetting(SettingsPath(), "general", [&](const std::string& key, const std::string& value)
+            {
+                if (key == "language")
+                    v = ParseLanguage(value);
+            });
+        if (v > 1)
+        {
+            // The disc must carry the text (Packages\Texts\<code>); else English, as a console would.
+            static const char* const codes[] = { "", "ENG", "", "DEU", "FRA", "ESP", "ITA" };
+            char exe[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, exe, MAX_PATH);
+            const auto dir = std::filesystem::path(exe).parent_path() / "game" / "Packages" / "Texts" / codes[v];
+            std::error_code ec;
+            if (!std::filesystem::is_directory(dir, ec))
+            {
+                RuntimeLog("[settings] Language %s: %s missing on this disc, using English\n", GameLanguageName(v), dir.string().c_str());
+                v = 1;
+            }
+        }
+        return v ? v : 1u;
+    }();
+    return id;
 }
 
 bool SaveSetting(const std::filesystem::path& ini, const std::string& section, const std::string& key, const std::string& value)

@@ -53,6 +53,11 @@ struct UpdateSettings
 DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini); // defaults if missing/invalid
 InputSettings LoadInputSettings(const std::filesystem::path& ini);     // [Input] MouseLook, MouseSensitivity, MouseInvertY, PlayStationNative, ButtonPrompts
 UpdateSettings LoadUpdateSettings(const std::filesystem::path& ini);
+// [General] Language=English|French|German|Spanish|Italian (or the X_LANGUAGE number):
+// the console language the title is told (XGetLanguage, XCONFIG_USER_LANGUAGE). Default English (1).
+// Applies on the next start. Env SCDA_LANGUAGE overrides (tests).
+uint32_t GameLanguage();
+const char* GameLanguageName(uint32_t id); // "English" .. ; nullptr if not one the disc can carry
 // Writes key=value into [section], replacing the key's line (any case) or adding it (and the
 // section). Other lines are kept as they are. Written to a temporary file, then renamed over.
 bool SaveSetting(const std::filesystem::path& ini, const std::string& section, const std::string& key, const std::string& value);

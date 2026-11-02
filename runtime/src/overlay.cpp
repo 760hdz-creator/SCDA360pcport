@@ -151,6 +151,14 @@ void DisplayTab(DisplaySettings& s)
     Hint("Camera field of view in degrees; 75 is the game's own. Zoom (binoculars, sniper, cameras) keeps its own value.");
     ImGui::Checkbox("Clean goggles", &s.cleanGoggles);
     Hint("Night, thermal and EMF vision without the scanlines and noise.");
+    // [General] Language (X_LANGUAGE id), saved at once, read at startup (GameLanguage).
+    static const uint32_t ids[] = { 1, 4, 3, 6, 5 };
+    const char* const languages[] = { "English", "French", "German", "Italian", "Spanish" };
+    static int language = int(std::find(std::begin(ids), std::end(ids), GameLanguage()) - std::begin(ids)) % 5;
+    if (ImGui::Combo("Language", &language, languages, 5))
+        SaveSetting(SettingsPath(), "General", "Language", languages[language]);
+    Hint("Menu, subtitle and voice language. Applies the next time the game starts. "
+         "Your disc must include the language (US/European discs: English, French, German, Spanish, Italian).");
 }
 
 void Preset(DisplaySettings& s, int level)

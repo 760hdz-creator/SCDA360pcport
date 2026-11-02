@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 #include <runtime.h>
+#include <settings.h>
 
 bool KernelSetEvent(uint32_t handle);
 uint32_t KernelAddHandle(HANDLE host);
@@ -267,6 +268,16 @@ SCDA_IMPORT(XamUserReadProfileSettings)
                     else
                         memcpy(g_base + e + 0x20, stored.data() + 8, 8);
                 }
+                else if (id == 0x10040003 && !getenv("SCDA_NO_VIBRATION_DEFAULT")) // XPROFILE_OPTION_CONTROLLER_VIBRATION
+                {
+                    // Dashboard default is on (3, as Xenia). The title reads 0 for source 0 and
+                    // then never calls XamInputSetState (issue #4: no rumble).
+                    GuestStore32(e, 1); // XUSER_PROFILE_SETTING_SOURCE_DEFAULT
+                    GuestStore32(e + 0x20, 3);
+                }
+            static const bool trace = getenv("SCDA_TRACE_PROFILE") != nullptr;
+            if (trace)
+                RuntimeLog("[xam] ReadProfileSettings id %08X source %u value %08X\n", id, GuestLoad32(e), GuestLoad32(e + 0x20));
             room += SettingRoom(id);
         }
     if (ov)
@@ -432,7 +443,7 @@ SCDA_IMPORT(XamUserCreateAchievementEnumerator)
     ctx.r3.u64 = kErrorSuccess;
 }
 
-SCDA_IMPORT(XGetLanguage) { ctx.r3.u64 = 1; } // English, as XCONFIG_USER_LANGUAGE
+SCDA_IMPORT(XGetLanguage) { ctx.r3.u64 = GameLanguage(); } // as XCONFIG_USER_LANGUAGE ([General] Language)
 SCDA_IMPORT(XGetAVPack) { ctx.r3.u64 = 0; }   // as Unleashed
 
 // XNotifyGetNext(Handle, MatchId, u32* Id, u32* Param) -> TRUE when a notification was dequeued

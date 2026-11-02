@@ -314,7 +314,14 @@ SCDA_IMPORT(XamInputSetState)
         ctx.r3.u64 = kErrorDeviceNotConnected;
         return;
     }
-    PadSetVibration(GuestLoad16(in), GuestLoad16(in + 2));
+    const uint16_t low = GuestLoad16(in), high = GuestLoad16(in + 2);
+    static bool logged;
+    if ((low || high) && !logged)
+    {
+        logged = true;
+        RuntimeLog("[input] first vibration %u/%u\n", low, high);
+    }
+    PadSetVibration(low, high);
     ctx.r3.u64 = kErrorSuccess;
 }
 

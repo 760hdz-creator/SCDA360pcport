@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 #include <runtime.h>
+#include <settings.h>
 #include <guest_time.h>
 #include <module.h>
 #include <alloc_tracker.h>
@@ -283,7 +284,7 @@ SCDA_IMPORT(ExGetXConfigSetting)
     {
         switch (setting)
         {
-        case 9: value = 1; break;            // XCONFIG_USER_LANGUAGE: English
+        case 9: value = GameLanguage(); break; // XCONFIG_USER_LANGUAGE ([General] Language)
         case 0xA: value = 0x00040000; break; // XCONFIG_USER_VIDEO_FLAGS
         case 0xC: value = 1; break;          // XCONFIG_USER_RETAIL_FLAGS
         case 0xE: value = 103; break;        // XCONFIG_USER_COUNTRY: US

@@ -85,3 +85,87 @@ PPC_FUNC(sub_82A88E60)
     }
     __imp__sub_82A88E60(ctx, base);
 }
+
+// SCDA_TRACE_RUMBLE=1: the title's vibration setter sub_821DFFD8(pad, f1 low, f2 high) and its
+// per-pad enable test sub_821C6660(manager, pad) (0 = the profile turned vibration off).
+extern "C" PPC_FUNC(__imp__sub_821DFFD8);
+extern "C" PPC_FUNC(__imp__sub_821C6660);
+static bool TraceRumble()
+{
+    static const bool on = getenv("SCDA_TRACE_RUMBLE") != nullptr;
+    return on;
+}
+
+PPC_FUNC(sub_821DFFD8)
+{
+    if (TraceRumble())
+        RuntimeLog("[rumble] set %.3f %.3f\n", ctx.f1.f64, ctx.f2.f64);
+    __imp__sub_821DFFD8(ctx, base);
+}
+
+PPC_FUNC(sub_821C6660)
+{
+    const uint32_t pad = ctx.r4.u32;
+    __imp__sub_821C6660(ctx, base);
+    if (TraceRumble())
+        RuntimeLog("[rumble] enabled(pad %u) = %u\n", pad, ctx.r3.u32);
+}
+
+// Script rumble request sub_8299AA28(pawn, f1 left, f2 right, f3 time): plays only if the CanRumble
+// event returns true, then sub_8266EC98 drives the pad.
+extern "C" PPC_FUNC(__imp__sub_8299AA28);
+extern "C" PPC_FUNC(__imp__sub_8266EC98);
+PPC_FUNC(sub_8299AA28)
+{
+    if (TraceRumble())
+    {
+        const uint32_t prefs = PPC_LOAD_U32(ctx.r3.u32 + 1888); // +44 bit 2 (0x20000000) = vibration on
+        RuntimeLog("[rumble] request %.3f %.3f %.3f prefs %08X flags %08X\n", ctx.f1.f64, ctx.f2.f64, ctx.f3.f64,
+            prefs, prefs ? PPC_LOAD_U32(prefs + 44) : 0);
+    }
+    __imp__sub_8299AA28(ctx, base);
+}
+
+PPC_FUNC(sub_8266EC98)
+{
+    if (TraceRumble())
+        RuntimeLog("[rumble] play %.3f %.3f %.3f\n", ctx.f1.f64, ctx.f2.f64, ctx.f3.f64);
+    __imp__sub_8266EC98(ctx, base);
+}
+
+// Rumble tick sub_8266EE18(state, f1 dt, r5 float* shake, r6 float* vibrate).
+extern "C" PPC_FUNC(__imp__sub_8266EE18);
+PPC_FUNC(sub_8266EE18)
+{
+    const uint32_t shake = ctx.r5.u32, vibrate = ctx.r6.u32;
+    __imp__sub_8266EE18(ctx, base);
+    if (TraceRumble())
+    {
+        const uint32_t s = PPC_LOAD_U32(shake), v = PPC_LOAD_U32(vibrate);
+        float fs, fv;
+        memcpy(&fs, &s, 4);
+        memcpy(&fv, &v, 4);
+        static uint32_t calls;
+        if (fs != 0 || fv != 0 || (++calls & 1023) == 1)
+            RuntimeLog("[rumble] tick #%u shake %.3f vibrate %.3f\n", calls, fs, fv);
+    }
+}
+
+// Rumble tick gates: sub_82615478(obj) = event CheckMissionStatus, sub_82615410(obj) = CanRumble.
+extern "C" PPC_FUNC(__imp__sub_82615478);
+extern "C" PPC_FUNC(__imp__sub_82615410);
+PPC_FUNC(sub_82615478)
+{
+    __imp__sub_82615478(ctx, base);
+    static uint32_t last = ~0u;
+    if (TraceRumble() && ctx.r3.u32 != last)
+        RuntimeLog("[rumble] gate A = %u\n", last = ctx.r3.u32);
+}
+
+PPC_FUNC(sub_82615410)
+{
+    __imp__sub_82615410(ctx, base);
+    static uint32_t last = ~0u;
+    if (TraceRumble() && ctx.r3.u32 != last)
+        RuntimeLog("[rumble] gate CanRumble = %u\n", last = ctx.r3.u32);
+}
