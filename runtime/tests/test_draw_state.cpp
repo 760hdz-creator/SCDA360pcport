@@ -253,6 +253,26 @@ TEST(topology_and_index_swap)
     uint16_t idx[3];
     memcpy(idx, out, 6);
     CHECK(idx[0] == 1 && idx[1] == 2 && idx[2] == 3);
+    // 16-byte SIMD body + scalar tail match a per-dword reference for every mode and length.
+    uint8_t big[70], got[70];
+    for (int i = 0; i < 70; i++)
+        big[i] = uint8_t(i * 7 + 1);
+    for (uint32_t endian = 0; endian < 4; endian++)
+        for (uint32_t n : { 2u, 16u, 18u, 32u, 46u, 70u })
+        {
+            memset(got, 0, sizeof(got));
+            SwapIndices(big, n, endian, got);
+            bool same = true;
+            for (uint32_t b = 0; b < n; b++)
+            {
+                const uint32_t dw = b & ~3u, o = b & 3;
+                const uint32_t src = endian == 1 ? (o ^ 1) : endian == 2 ? (3 - o) : endian == 3 ? (o ^ 2) : o;
+                // Tail dwords are zero-padded before the swap.
+                const uint8_t want = dw + src < n ? big[dw + src] : 0;
+                same &= got[b] == want;
+            }
+            CHECK(same);
+        }
 }
 
 TEST(vertex_fetch_slots_from_hlsl)

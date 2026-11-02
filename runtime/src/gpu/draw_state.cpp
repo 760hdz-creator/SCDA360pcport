@@ -1,6 +1,7 @@
 #include <unordered_set>
 #include <mutex>
 #include <windows.h>
+#include <tmmintrin.h>
 #include <algorithm>
 #include <bit>
 #include <cctype>
@@ -111,9 +112,8 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
 
 void CopyAluConstants(const RegisterFile& r, bool pixel, uint32_t out[1024])
 {
-    const uint32_t base = kRegAluConstants + (pixel ? 1024 : 0);
-    for (uint32_t i = 0; i < 1024; i++)
-        out[i] = r[base + i];
+    static_assert(kRegAluConstants + 2048 <= RegisterFile::kCount);
+    memcpy(out, r.Data() + kRegAluConstants + (pixel ? 1024 : 0), 1024 * sizeof(uint32_t));
 }
 
 bool VertexFetchRange(const RegisterFile& r, uint32_t slot, MemoryRange& out)
@@ -848,6 +848,18 @@ void SwapIndices(const uint8_t* guest, uint32_t bytes, uint32_t endian, uint8_t*
 {
     // Endian modes work on whole dwords (8-in-16 on 16-bit indices swaps each index).
     uint32_t i = 0;
+    // 16 bytes per step (pshufb): the scalar loop was 8% of the renderer thread on newyork_02.
+    if (endian >= 1 && endian <= 3)
+    {
+        static const __m128i kShuffle[3] = {
+            _mm_setr_epi8(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14),  // 8-in-16
+            _mm_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12),  // 8-in-32
+            _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13) }; // 16-in-32
+        const __m128i mask = kShuffle[endian - 1];
+        for (; i + 16 <= bytes; i += 16)
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(out + i),
+                _mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(guest + i)), mask));
+    }
     for (; i + 4 <= bytes; i += 4)
     {
         uint32_t d;

@@ -22,6 +22,7 @@ public:
             regs[i] = v;
     }
     void Clear() { regs.fill(0); }
+    const uint32_t* Data() const { return regs.data(); } // kCount registers
 
 private:
     std::array<uint32_t, kCount> regs{};

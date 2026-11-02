@@ -349,6 +349,11 @@ struct DrawResources
     std::unordered_map<uint32_t, ComPtr<ID3D11DepthStencilView>> depthTargets;
     uint32_t boundKeys[5] = {}; // RT0-3 + depth keys bound now; ~0u = none
     bool bound = false;         // boundKeys valid (false after the blit or a new frame)
+    // t0-t95 as bound now (VS, PS), valid while srvShadow: only changed slots are rebound. Any other
+    // SRV or render target bind clears srvShadow (D3D11 silently unbinds SRVs whose resource
+    // becomes a render target, so the shadow could otherwise claim a slot that is now null).
+    ID3D11ShaderResourceView* boundSrv[2][96] = {};
+    bool srvShadow = false;
     ColorTarget* last = nullptr; // RT0 of the last draw or resolve: presented when there is no frontbuffer
     SurfaceLayout lastLayout{ 1280, 1, 1, 1280, 1280 }; // surface layout `last` was bound with
     ComPtr<ID3D11VertexShader> blitVs;
@@ -1142,9 +1147,8 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     {
         if (!r.aluDirty[pixel])
             continue; // b0/b1 already hold these constants
-        uint32_t alu[1024];
-        CopyAluConstants(regs, pixel != 0, alu);
-        m_context->UpdateSubresource(r.constants[pixel].Get(), 0, nullptr, alu, 0, 0);
+        // b0/b1 = ALU constants 0-1023 / 1024-2047, straight from the register file.
+        m_context->UpdateSubresource(r.constants[pixel].Get(), 0, nullptr, regs.Data() + kRegAluConstants + (pixel ? 1024 : 0), 0, 0);
         r.aluDirty[pixel] = false;
     }
     // Window pixels -> the host target: guest pitch x rows wide (EdramSurfaceLayout), MSAA surfaces
@@ -1181,6 +1185,7 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     if (!r.bound || !std::equal(keys, keys + 5, r.boundKeys))
     {
         m_context->OMSetRenderTargets(count, rtvs, DepthTargetFor(m_device, m_context, r, keys[4]));
+        r.srvShadow = false;
         D3D11_VIEWPORT vp{ 0, 0, float(layout.samplePitch * r.scale), float(layout.sampleRows * r.scale), 0, 1 };
         m_context->RSSetViewports(1, &vp);
         std::copy(keys, keys + 5, r.boundKeys);
@@ -1370,7 +1375,8 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
                 }
             if (!noResolveSwizzle && swizzle != 0x688)
                 shared.texSwizzle[slot] = 0x1000 | swizzle;
-            if (getenv("SCDA_TRACE_RESOLVE") && TraceResolveOnce((3ull << 60) | (uint64_t(t.physical) << 16) | t.swizzle))
+            static const bool traceResolve = getenv("SCDA_TRACE_RESOLVE") != nullptr;
+            if (traceResolve && TraceResolveOnce((3ull << 60) | (uint64_t(t.physical) << 16) | t.swizzle))
                 RuntimeLog("[resolve] fetch %08X fmt %u %ux%u swizzle %03X (resolve fmt %u)\n", t.physical, t.format, t.width, t.height,
                     t.swizzle, res->second.destFormat);
             continue;
@@ -1600,12 +1606,31 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
             srvs[slot] = it->second.Get();
     }
     m_context->UpdateSubresource(r.constants[2].Get(), 0, nullptr, &shared, 0, 0);
-    for (auto set : { &ID3D11DeviceContext::VSSetShaderResources, &ID3D11DeviceContext::PSSetShaderResources })
+    // Only the changed range per stage (6 x 32-slot binds per draw were ~a third of the driver time
+    // on newyork_02). SCDA_NO_SRV_SHADOW=1: always rebind all 96.
+    static const bool noSrvShadow = getenv("SCDA_NO_SRV_SHADOW") != nullptr;
+    ID3D11ShaderResourceView* want[96];
+    std::copy(srvs, srvs + 32, want);
+    std::copy(volumeSrvs, volumeSrvs + 32, want + 32);
+    std::copy(cubeSrvs, cubeSrvs + 32, want + 64);
+    static constexpr void (STDMETHODCALLTYPE ID3D11DeviceContext::*kSet[2])(UINT, UINT, ID3D11ShaderResourceView* const*) = {
+        &ID3D11DeviceContext::VSSetShaderResources, &ID3D11DeviceContext::PSSetShaderResources };
+    for (uint32_t stage = 0; stage < 2; stage++)
     {
-        (m_context->*set)(kHlslTex2DSlot, 32, srvs);
-        (m_context->*set)(kHlslTex2DSlot + 32, 32, volumeSrvs);
-        (m_context->*set)(kHlslTex2DSlot + 64, 32, cubeSrvs);
+        ID3D11ShaderResourceView** have = r.boundSrv[stage];
+        uint32_t first = 0, last = 96;
+        if (r.srvShadow && !noSrvShadow)
+        {
+            while (first < 96 && have[first] == want[first])
+                first++;
+            while (last > first && have[last - 1] == want[last - 1])
+                last--;
+        }
+        if (first < last)
+            (m_context->*kSet[stage])(kHlslTex2DSlot + first, last - first, want + first);
+        std::copy(want, want + 96, have);
     }
+    r.srvShadow = true;
 
     // Samplers s0-s15 from fetch constants 0-15 (the translator indexes samplers by fetch slot & 15).
     ID3D11SamplerState* samplers[16];
@@ -2064,6 +2089,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         {
             ID3D11ShaderResourceView* srv = avg.Get();
             m_context->PSSetShaderResources(kHlslTex2DSlot + averageSlot, 1, &srv);
+            r.srvShadow = false;
             r.stateDirty = true; // the next draw rebinds the guest textures
         }
     }
@@ -2114,6 +2140,7 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             }
             ID3D11ShaderResourceView* srv = f.srv.Get();
             m_context->PSSetShaderResources(kHlslTex2DSlot + f.slot, 1, &srv);
+            r.srvShadow = false;
             r.stateDirty = true;
         }
     }
@@ -2663,7 +2690,7 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
                 {
                     // The source is bound as a render target: unbind it before reading it.
                     m_context->OMSetRenderTargets(0, nullptr, nullptr);
-                    r.bound = false;
+                    r.bound = false; r.srvShadow = false;
                     const int32_t rect[8] = { x0, y0, x1, y1, int32_t(hostDy), int32_t(layout.samplesX), int32_t(layout.samplesY),
                         (((res.copyControl >> 4) & 7) >= 4 ? 1 : 0) | (saturate ? 2 : 0) };
                     m_context->UpdateSubresource(r.saturateRect.Get(), 0, nullptr, rect, 0, 0);
@@ -2748,7 +2775,7 @@ void D3D11Renderer::Blit(ID3D11ShaderResourceView* source)
     ID3D11ShaderResourceView* none = nullptr;
     m_context->PSSetShaderResources(0, 1, &none);
     m_context->OMSetRenderTargets(1, &m_backBuffer, nullptr);
-    r.bound = false;
+    r.bound = false; r.srvShadow = false;
     D3D11_VIEWPORT vp{ 0, 0, float(m_width), float(m_height), 0, 1 };
     m_context->RSSetViewports(1, &vp);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -2773,7 +2800,7 @@ void D3D11Renderer::PostPass(ID3D11ShaderResourceView* source, ID3D11RenderTarge
     ID3D11ShaderResourceView* nones[2] = {};
     m_context->PSSetShaderResources(0, 2, nones);
     m_context->OMSetRenderTargets(1, &target, nullptr);
-    r.bound = false;
+    r.bound = false; r.srvShadow = false;
     D3D11_VIEWPORT vp{ 0, 0, float(width), float(height), 0, 1 };
     m_context->RSSetViewports(1, &vp);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -2898,7 +2925,7 @@ void D3D11Renderer::ApplyScale(uint32_t scale)
     r.colorTargets.clear();
     r.depthTargets.clear();
     r.last = nullptr;
-    r.bound = false;
+    r.bound = false; r.srvShadow = false;
     r.stateDirty = true;
     r.scale = m_scale = scale;
     RuntimeLog("[d3d11] internal resolution %ux%u (scale %u)\n", kTargetWidth * m_scale, 720 * m_scale, m_scale);
@@ -2965,7 +2992,7 @@ void D3D11Renderer::Present(const Frame& frame)
         }
         m_midGuestFrame = frame.partial;
         // EDRAM surfaces persist across frames; only guest clears (resolves) clear them.
-        r.bound = false; // the first bind sets the targets and their viewport
+        r.bound = false; r.srvShadow = false; // the first bind sets the targets and their viewport
         m_context->RSSetState(r.rasterizer.Get());
         m_context->IASetInputLayout(nullptr);
         ID3D11SamplerState* samplers[16];
@@ -3062,6 +3089,7 @@ void D3D11Renderer::Present(const Frame& frame)
         ID3D11ShaderResourceView* none[32] = {};
         m_context->VSSetShaderResources(0, 32, none);
         m_context->PSSetShaderResources(0, 32, none);
+        r.srvShadow = false;
         auto front = frame.frontbuffer ? r.resolved.find(frame.frontbuffer & 0x1FFFF000) : r.resolved.end();
         m_lastFrontbuffer = front != r.resolved.end() && drawLimit == SIZE_MAX;
         // No frontbuffer resolve: the last RT0 (or the idle colour when nothing was drawn yet).
@@ -3144,7 +3172,7 @@ void D3D11Renderer::Present(const Frame& frame)
     {
         m_context->OMSetRenderTargets(1, &m_backBuffer, nullptr);
         if (m_draw)
-            m_draw->bound = false;
+            m_draw->bound = false; m_draw->srvShadow = false;
         m_overlay();
     }
     if (!m_backDumpPath.empty() && m_backBuffer)
