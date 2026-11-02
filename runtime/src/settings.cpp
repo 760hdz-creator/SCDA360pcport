@@ -95,12 +95,6 @@ DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini)
             if (v >= 60 && v <= 110)
                 s.fov = uint32_t(v);
         }
-        else if (key == "lightdistance")
-        {
-            int v = atoi(value.c_str());
-            if (v >= 1 && v <= 8)
-                s.lightDistance = uint32_t(v);
-        }
         else if (key == "antialiasing")
         {
             if (value == "off") s.antiAliasing = DisplaySettings::AaOff;

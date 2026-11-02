@@ -18,7 +18,6 @@ TEST(settings_defaults_when_missing)
     CHECK(!s.cleanGoggles); // authentic goggle overlay unless asked
     CHECK(!s.drawBackFaces); // console culling by default (mirrors need it)
     CHECK_EQ(s.fov, 75u);   // the game's own field of view
-    CHECK_EQ(s.lightDistance, 4u); // lights / shadows fade 4x farther (issue #1)
 }
 
 TEST(settings_parsed)
@@ -28,8 +27,6 @@ TEST(settings_parsed)
     CHECK(LoadDisplaySettings(Ini("[Display]\nDrawBackFaces=1\n")).drawBackFaces);
     CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nFOV=95\n")).fov, 95u);
     CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nFOV=300\n")).fov, 75u);
-    CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nLightDistance=1\n")).lightDistance, 1u);
-    CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nLightDistance=9\n")).lightDistance, 4u);
     CHECK_EQ(s.scale, 2u);
     CHECK(s.mode == DisplaySettings::Borderless);
     CHECK(!s.vsync);

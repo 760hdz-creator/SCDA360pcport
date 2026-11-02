@@ -79,7 +79,6 @@ void Apply(const DisplaySettings& s)
     g_renderer->SetCleanGoggles(s.cleanGoggles);
     g_renderer->SetDrawBackFaces(s.drawBackFaces);
     SetFovOverride(float(s.fov));
-    SetLightDistanceScale(float(s.lightDistance));
 }
 
 // Writes the keys that changed.
@@ -99,8 +98,6 @@ void Save(const DisplaySettings& before, const DisplaySettings& after)
         save("CleanGoggles", after.cleanGoggles ? "1" : "0");
     if (before.fov != after.fov)
         save("FOV", std::to_string(after.fov));
-    if (before.lightDistance != after.lightDistance)
-        save("LightDistance", std::to_string(after.lightDistance));
     if (before.drawBackFaces != after.drawBackFaces)
         save("DrawBackFaces", after.drawBackFaces ? "1" : "0");
     if (before.antiAliasing != after.antiAliasing)
@@ -152,11 +149,6 @@ void DisplayTab(DisplaySettings& s)
     if (ImGui::SliderInt("Field of view", &fov, 60, 110, fov == 75 ? "%d (default)" : "%d"))
         s.fov = uint32_t(fov);
     Hint("Camera field of view in degrees; 75 is the game's own. Zoom (binoculars, sniper, cameras) keeps its own value.");
-    int lightDistance = int(s.lightDistance);
-    if (ImGui::SliderInt("Light distance", &lightDistance, 1, 8, lightDistance == 1 ? "x%d (console)" : "x%d"))
-        s.lightDistance = uint32_t(lightDistance);
-    Hint("How far away lights and their shadows stay on. x1 is the console's distance, where far lights "
-         "switch off (Iceland geothermal plant); x4 matches the PC widescreen fix.");
     ImGui::Checkbox("Clean goggles", &s.cleanGoggles);
     Hint("Night, thermal and EMF vision without the scanlines and noise.");
 }

@@ -19,9 +19,6 @@ struct DisplaySettings
     bool drawBackFaces = false;
     // Field of view in degrees ([Display] FOV=60..110). 75 is the game's own (nothing is changed).
     uint32_t fov = 75;
-    // Light / shadow draw distance multiplier ([Display] LightDistance=1..8, default 4 like the PC
-    // widescreen fix): scales each light's TurnOffDistance. 1 = the console's cut-off.
-    uint32_t lightDistance = 4;
     // Post-processing on the presented frame (F1 menu, Graphics). Defaults leave the image as the
     // console made it. The game's own 4x MSAA is always on.
     enum AntiAliasing { AaOff, AaFxaa } antiAliasing = AaOff; // [Display] AntiAliasing=Off|FXAA

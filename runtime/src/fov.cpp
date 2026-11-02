@@ -118,11 +118,9 @@ void FovSeeObject(uint32_t obj)
 // user's value, and DesiredFOV too while it sits at a default (not zoomed). The game's own value
 // (75) writes nothing.
 // SCDA_FOV_TEST=<sam|desired|angle>:<degrees>: write that property every tick instead (diagnostic).
-void LightDistanceTick(uint32_t controller); // light_distance.cpp
 
 void FovTick()
 {
-    LightDistanceTick(g_controller);
     // Reflection dumps, once a controller exists (finding script properties without the packages):
     // SCDA_DUMP_NAMES=<sub>[,<sub>..] logs every GNames entry containing a substring (case-insensitive);
     // SCDA_DUMP_PROPS=<class>[,<class>..] logs each class's own properties + byte offsets, found

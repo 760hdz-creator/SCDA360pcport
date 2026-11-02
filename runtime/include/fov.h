@@ -4,5 +4,3 @@
 
 void SetFovOverride(float degrees);
 
-// Light / shadow draw distance multiplier (src/light_distance.cpp), >= 1. Thread-safe.
-void SetLightDistanceScale(float scale);
