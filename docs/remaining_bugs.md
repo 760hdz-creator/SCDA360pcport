@@ -3,6 +3,21 @@
 Ranked by impact on a first release. Each entry: symptom, repro, evidence, suspected cause, status.
 Evidence paths under `_run/` are local only (git-ignored).
 
+## OPEN. Okhotsk_02: open water shows moire rings / fine stripes (2026-11-02)
+
+- **Symptom (user screenshot):** from the ice, the open water is covered in concentric rings and fine diagonal
+  stripes; the 360 (`_run/ref/okh/x360_m4.mp4` ~650-700 s) shows dark, smooth, reflective water. Not caused by
+  the lens-drop workaround (same with `SCDA_NO_LENS_DROP_FIX=1 SCDA_ALIAS_RAW_Z=1`).
+- **Repro:** `SCDA_LAUNCH_DATA=_run/okhblue/save2.launch` (user save on the ice), dump frame 700.
+- **Evidence:** water = VS dba2eb38 / PS 56bb3779; slots 10-12 are 128x128 k_16_16 ripple-normal resolves
+  (10215000/10235000/10255000) of the wave simulation on EDRAM 0 (surface 020000A0, k_16_16_16_16_FLOAT; state
+  resolved to 02B36000). Those textures oscillate at pixel frequency (alternate rows / checkerboard,
+  `_run/okhblue/wres1.png`) at Scale 1 too; Scale 3 adds the large rings (`_run/okhblue/water4.png`). No mips on
+  the 360 either (fetch mip level 0). Clamping k_16_16 UNORM resolves (`IsFloatTextureFormat` lists 25/26, so
+  resolves to them skip the saturate) did not help and was reverted.
+- **Next:** the sim passes on 020000A0 (draws ~240-260 of the frame): suspect a half-texel offset or neighbour
+  step in the 128x128 sim (alternating pattern), and that scaled targets break the sim's texel steps.
+
 ## FIXED (workaround). Okhotsk_02: screen washes pale blue / cyan after surfacing (2026-11-01)
 
 - **Symptom (user video):** surfacing at the "Use detonators to blow the ice wall" spot turns the whole frame cyan.
