@@ -51,7 +51,8 @@ How, in plain terms:
 - **No more black walls and floors** at the start of Kinshasa, on the Osprey ramp in Iceland and in the Cozumel
   room. A fix for New York's sky also darkened large surfaces close to the camera.
 - **Clear sky through the ice.** Diving under the ice in Iceland and the Sea of Okhotsk, the view up through the
-  water was smeared with Sam and other things from underwater. The water's view of the world above now leaves out everything below the surface, like the console.
+  water was smeared with Sam and other things from underwater. The water's view of the world above now leaves out
+  everything below the surface, like the console.
 - **Cozumel's sea reaches the horizon.** The black, jagged strip between the sea and the sky is gone.
 - **Light distance setting** (F1 > Display). Lights switch off past a certain distance, so far parts of levels can
   look dark, for example the Iceland geothermal plant. The default x4 shows far more lights than the console, like
@@ -105,8 +106,14 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 | **Ellsworth Penitentiary**: helping Jamie escape | **Sea of Okhotsk**: diving under the ice |
 | ![Kinshasa](docs/images/kinshasa_camp.jpg) | ![Shanghai hotel](docs/images/hotel.jpg) |
 | **Kinshasa**: getting the plans, with sun shadows | **Shanghai**: arriving at the hotel |
-| ![JBA headquarters](docs/images/jba_hq.jpg) | |
-| **New York**: JBA headquarters | |
+| ![JBA headquarters](docs/images/jba_hq.jpg) | ![Shanghai hotel: bathroom mirror](docs/images/hotel_mirror.jpg) |
+| **New York**: JBA headquarters | **Shanghai**: the bathroom mirror reflects Sam again |
+| ![Kinshasa: the alley at the start](docs/images/kinshasa_alley.jpg) | ![Cozumel: the cabin balcony](docs/images/cozumel_balcony.jpg) |
+| **Kinshasa**: the alley at the start, walls no longer black | **Cozumel**: the cabin and its balcony |
+| ![Iceland: the light shaft through the ice](docs/images/iceland_light_shaft.jpg) | ![Iceland: Osprey ramp in night vision](docs/images/iceland_osprey_ramp.jpg) |
+| **Iceland**: the light shaft through the ice hole | **Iceland**: the Osprey ramp in night vision |
+| ![Sea of Okhotsk: swimming under the ice](docs/images/okhotsk_swim.jpg) | |
+| **Sea of Okhotsk**: swimming under the ice | |
 
 ## How far along is it?
 
@@ -127,7 +134,7 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 - Most maps hold the game's 30 fps limit. New York's busiest areas can drop to about 25 fps.
 - Fog, light shafts and the water surface seen from below may still look slightly different from the console in
   places.
-- No ultrawide support yet.
+- No ultrawide support yet. 21:9 and 32:9 are planned ([issue #2](https://github.com/8gramlabs/SCDA360pcport/issues/2)).
 - Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
   show up about a third of the way down the screen.
 
