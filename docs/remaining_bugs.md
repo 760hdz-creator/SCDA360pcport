@@ -261,6 +261,10 @@ Evidence paths under `_run/` are local only (git-ignored).
   - Next: a repro at the HQ_01 wooden room (360 `hq1.mp4` ~140 s: clear Sam/Moss floor shadows). Check whether that
     light uses the additive B path (needs clear 0) or the MIN path on A (works with clear 1). Needs a save there or
     a scripted walk (Follow Moss, 30-140 s in the ref).
+  - **2026-11-02 wooden room (user save, `_run/maps/moss_save.launch` = `SAVEGAME=001300020017000b000602d0f5b10c42`,
+    `SCDA_AUTOPRESS=900:A,1000:A,1100:A,1200:A,1300:A,1450:LY=1:90`, frame 1700): raw z gives Moss, Sam and chair floor
+    shadows like the 360 (`hq1.mp4` ~140 s); default has none (`_run/shadow/wood/moss2.png`). So raw z (0) is right
+    for HQ. Remaining before making it default: Kinshasa01's sunlit ground goes dark with raw z.
 
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 
