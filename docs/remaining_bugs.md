@@ -213,7 +213,7 @@ Evidence paths under `_run/` are local only (git-ignored).
 - **Fix:** a non-zero aliased clear also clears the whole host colour target (`SCDA_ALIAS_QUAD_ONLY=1` for A/B).
   Verified `_run/st/` (NY 1500/2400/2600, Hotel, Kinshasa01: no band).
 
-## OPEN. HQ_01_A: no character shadows (issue #6) (2026-11-02)
+## FIXED (approximation). HQ_01_A: no character shadows (issue #6) (2026-11-02)
 
 - **Symptom (user shot, 360 ref `_run/ref360/hq1.mp4` ~148 s):** characters cast no shadow in the HQ rooms.
 - **Repro:** `00_HQ_01_A.launch` + `SCDA_AUTOPRESS=1250:A,1350:A` (skips "Undercover guidelines"), frame 1600
@@ -277,6 +277,14 @@ Evidence paths under `_run/` are local only (git-ignored).
     224-1055 and overwrites the mask's 448-631 every frame; Kinshasa's 512 map at 0xE0 ends at 447, so the mask keeps
     last frame's A = c0.w). That needs EDRAM aliasing between surfaces, which we do not emulate (Xenia does and is dark,
     so not proven). Unresolved.
+  - **Fix (2026-11-02, auto):** EDRAM tile owners (`g_tileOwner`/`g_tileFormat`, marked by every draw with the viewport
+    transform). An aliased depth clear uses raw z (0) when the last other surface in its first 16 tile rows was not
+    8_8_8_8 (HQ: R32F 1024 shadow map at 0xE0 -> alpha would read low on the console), else depth 1 as before (Kinshasa:
+    the 8_8_8_8 final image at base 0 -> alpha ~1). HQ wooden room gets 360-like shadows, Kinshasa01 unchanged
+    (`_run/shadow/wood/auto.png`); Intro/Jail/Okhotsk_02/Hotel/Cozumel_01/newyork_02/HQ_01_A A/B show no regression
+    (`reg_sheet.png`, diffs = animation). `SCDA_ALIAS_FIXED_Z=1` = old, `SCDA_ALIAS_RAW_Z=1` = always raw,
+    `SCDA_TRACE_DEPTH_ALIAS=1` logs decisions + writers over 0x1C0. shortcut: approximates the leftover EDRAM bytes by
+    the owner's format; a full EDRAM model would copy them.
 
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 

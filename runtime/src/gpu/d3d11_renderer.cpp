@@ -1182,6 +1182,68 @@ static float SnapshotVertexDword(const DrawCall& d, const Frame& frame, const Re
 // min(mask.B, mask.A) when its baked-shadow s13 is the black default), and Jail traces the identical
 // clear, so 1 stays. Jail's missing floor patches come from elsewhere (docs/remaining_bugs.md).
 // shortcut: other colour formats get 0.
+// EDRAM tile owners: base + 1 of the last surface that wrote each 5120-byte tile (0 = none). Host
+// targets never alias, so this only records which surface the console's EDRAM would hold there.
+// Marked for draws with the viewport transform on (their rows = y offset + |y scale|); screen-space
+// quads (D3D clears, VTE 0x300) are skipped.
+static uint16_t g_tileOwner[2048];
+static uint8_t g_tileFormat[2048]; // owner's colour format, 16 = depth
+
+static void MarkEdramWrites(const RegisterFile& regs)
+{
+    const uint32_t vte = regs[0x2206];
+    if ((vte & 0xC) != 0xC)
+        return;
+    const float ys = std::bit_cast<float>(regs[0x2111]), yo = std::bit_cast<float>(regs[0x2112]);
+    const float rowsF = std::fabs(ys) + yo;
+    if (!(rowsF > 0))
+        return;
+    const SurfaceLayout l = EdramSurfaceLayout(regs[kRegRbSurfaceInfo]);
+    const uint32_t tileRows = (std::min(uint32_t(rowsF + 0.999f), 2048u) * l.samplesY + 15) / 16;
+    auto mark = [&](uint32_t base, bool wide, uint8_t format)
+    {
+        const uint32_t n = std::min((l.samplePitch * (wide ? 2 : 1) + 79) / 80 * tileRows, 2048u);
+        static const bool trace = getenv("SCDA_TRACE_DEPTH_ALIAS") != nullptr;
+        static std::unordered_set<uint64_t> seen;
+        if (trace && base != 0x1C0 && base <= 0x1C0 && base + n > 0x1C0 &&
+            seen.insert(uint64_t(base) << 48 ^ uint64_t(regs[kRegRbSurfaceInfo]) << 16 ^ uint64_t(n) ^ uint64_t(wide) << 40).second)
+            RuntimeLog("[zalias] tiles %03X+%u over 0x1C0: surf %08X color %08X depth %08X rows %g vte %08X\n", base, n,
+                regs[kRegRbSurfaceInfo], regs[kRegRbColorInfo], regs[kRegRbDepthInfo], double(rowsF), vte);
+        for (uint32_t t = 0; t < n; t++)
+        {
+            g_tileOwner[(base + t) & 2047] = uint16_t(base + 1);
+            g_tileFormat[(base + t) & 2047] = format;
+        }
+    };
+    static constexpr uint32_t kInfo[4] = { kRegRbColorInfo, kRegRbColor1Info, kRegRbColor2Info, kRegRbColor3Info };
+    if ((regs[kRegRbModeControl] & 7) == 4)
+        for (uint32_t n = 0; n < 4; n++)
+            if ((regs[kRegRbColorMask] >> (4 * n)) & 0xF)
+            {
+                const uint32_t format = (regs[kInfo[n]] >> 16) & 0xF;
+                mark(regs[kInfo[n]] & 0xFFF, format == 5 || format == 7 || format == 15, uint8_t(format)); // 64bpp
+            }
+    if ((regs[0x2200] & 6) == 6) // depth test + write
+        mark(regs[kRegRbDepthInfo] & 0xFFF, false, 16);
+}
+
+// Whether another surface left non-8_8_8_8 data (a float shadow map, depth) in the first 16 tile rows
+// at an aliased clear's colour base: on the console those bytes would read as a low alpha; an
+// 8_8_8_8 owner's (the final image) alpha ~1 matches the depth-1 clear we use otherwise.
+static uint32_t g_lastForeignOwner; // base + 1 of the surface found (trace)
+static bool EdramOverwrittenByOther(const RegisterFile& regs)
+{
+    const uint32_t base = regs[kRegRbColorInfo] & 0xFFF;
+    const uint32_t n = (EdramSurfaceLayout(regs[kRegRbSurfaceInfo]).samplePitch + 79) / 80 * 16;
+    for (uint32_t t = 0; t < n; t++)
+        if (const uint16_t o = g_tileOwner[(base + t) & 2047]; o && o != base + 1 && g_tileFormat[(base + t) & 2047] > 1)
+        {
+            g_lastForeignOwner = o;
+            return true;
+        }
+    return false;
+}
+
 static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
 {
     rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0.0f;
@@ -1193,8 +1255,20 @@ static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
     memcpy(&zo, &zoBits, 4);
     // SCDA_ALIAS_RAW_Z=1 (A/B): honour PA_CL_VTE_CNTL bit 5 (z offset enable; off in the clears'
     // VTE 0x300), so the clear depth is the quad's raw z ~ 0.
+    // Auto (#6): raw z when another surface overwrote the target's EDRAM since it last drew. HQ's
+    // 1024 shadow map covers the 640x360 light mask at 0x1C0 and needs the mask cleared to 0 for
+    // character shadows (wooden room = 360). Kinshasa's 512 map ends below 0x1C0; its no-lightmap
+    // meshes are lit only by the cleared alpha, which must stay 1 there. Real hardware writes the
+    // same 0 in both, so this approximates EDRAM contents we do not emulate (docs/remaining_bugs.md).
+    // SCDA_ALIAS_FIXED_Z=1: never raw (old).
     static const bool rawZ = getenv("SCDA_ALIAS_RAW_Z") != nullptr;
-    if (rawZ && !(regs[0x2206] & 0x20))
+    static const bool fixedZ = getenv("SCDA_ALIAS_FIXED_Z") != nullptr;
+    const bool overwritten = !fixedZ && EdramOverwrittenByOther(regs);
+    static int lastAuto = -1;
+    if (getenv("SCDA_TRACE_DEPTH_ALIAS") && int(overwritten) != lastAuto)
+        RuntimeLog("[zalias] auto raw z %d at color %08X (owner base %03X)\n", int(overwritten), regs[kRegRbColorInfo], g_lastForeignOwner - 1);
+    lastAuto = int(overwritten);
+    if ((rawZ || overwritten) && !(regs[0x2206] & 0x20))
         zo = 0.0f;
     const double depth = std::clamp(double(zo), 0.0, 1.0);
     uint32_t d24;
@@ -1271,6 +1345,9 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
 
     HostBlend b = DecodeBlend(regs);
     const bool zeroColor = DepthOnlyOverwritesColor(regs);
+    if (zeroColor)
+        AliasedClearColor(regs, b.factor); // before this draw's own marks: reads who last wrote there
+    MarkEdramWrites(regs);
     // SCDA_TRACE_DEPTH_ALIAS=1: each distinct depth-only state once; =<n>: also every one in frame n.
     static const char* traceAliasEnv = getenv("SCDA_TRACE_DEPTH_ALIAS");
     static const bool traceAlias = traceAliasEnv != nullptr;
@@ -1281,9 +1358,8 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
         RuntimeLog("[zalias] frame %llu alias %d surf %08X color %08X depth %08X zctl %08X sc %08X wo %08X ref %08X zs %08X zo %08X vte %08X clip %08X\n", m_presented, zeroColor ? 1 : 0,
             regs[kRegRbSurfaceInfo], regs[kRegRbColorInfo], regs[kRegRbDepthInfo], regs[0x2200], regs[0x2205], regs[0x2080],
             regs[0x210D], regs[0x2113], regs[0x2114], regs[0x2206], regs[0x2204]);
-    if (zeroColor) // the blend factor (AliasedClearColor) whatever the PS returns (zeroPs returns 1)
+    if (zeroColor) // the blend factor (AliasedClearColor, above) whatever the PS returns (zeroPs returns 1)
     {
-        AliasedClearColor(regs, b.factor);
         // A non-zero clear fills the whole host target: the title's quad stops a few rows short of
         // the 640x360 light mask's bottom (rows ~356+), which on the console keep other surfaces'
         // EDRAM bits but here stayed 0 = shadow: a dark band over the last 16 screen rows (NY boat,
