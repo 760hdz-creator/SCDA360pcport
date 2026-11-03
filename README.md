@@ -6,11 +6,11 @@
 
 **Splinter Cell: Double Agent (Xbox 360) running natively on Windows. No emulator.**
 
-[![Download the latest release](https://img.shields.io/github/downloads/8gramlabs/SCDA360pcport/total?style=for-the-badge&logo=github&label=Download%20latest%20release&color=2ea44f)](https://github.com/8gramlabs/SCDA360pcport/releases/latest)
+[![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest)
 
 ![status](https://img.shields.io/badge/status-playable%2C%20visual%20bugs%20known-yellowgreen)
-[![Report a bug](https://img.shields.io/badge/report-a%20bug-red?logo=github)](https://github.com/8gramlabs/SCDA360pcport/issues)
-[![Ideas](https://img.shields.io/badge/share-ideas-blueviolet?logo=github)](https://github.com/8gramlabs/SCDA360pcport/discussions/categories/ideas)
+[![Report a bug](https://img.shields.io/badge/report-a%20bug-red?logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues)
+[![Ideas](https://img.shields.io/badge/share-ideas-blueviolet?logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues/new?issue[title]=Idea:%20)
 ![platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![renderer](https://img.shields.io/badge/renderer-Direct3D%2011-informational)
 ![license](https://img.shields.io/badge/license-GPL--3.0-green)
@@ -20,7 +20,7 @@
 > [!NOTE]
 > **You can play the whole game.** Every mission loads, plays and saves, and missions lead into each other like on
 > the console. The installer is out: get `SCDA_Setup.exe` from the
-> [latest release](https://github.com/8gramlabs/SCDA360pcport/releases/latest).
+> [latest release](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest).
 
 > [!WARNING]
 > **This build still has visual bugs.** I fix as many as I can, but fixing one sometimes brings out a new one. The
@@ -52,6 +52,8 @@ How, in plain terms:
   through the walls anymore. Some level geometry was being built from the wrong points.
 - **The Iceland shack is solid.** Its roof and walls had holes from the inside. It was the same bug as the JBA HQ
   walls.
+- **Character shadows at JBA HQ.** Sam, the other characters and the furniture cast shadows from the HQ room
+  lights again, like on the Xbox 360.
 - **Hotel windows work.** Looking in through the rainy glass on the outside of the hotel, you now see the room and
   the people inside, not big blurry blocks. A small mistake in how the game's shaders were converted broke this effect.
 - **Hotel mirrors are back.** The bathroom mirrors reflect Sam and the room again instead of showing a dark wall.
@@ -136,13 +138,13 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 **Known issues**
 
 - Most maps hold the game's 30 fps limit. New York's busiest areas can drop to about 25 fps.
-- No ultrawide support yet. 21:9 and 32:9 are planned ([issue #2](https://github.com/8gramlabs/SCDA360pcport/issues/2)).
+- No ultrawide support yet. 21:9 and 32:9 are planned.
 - Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
   show up about a third of the way down the screen.
 
 ## Reporting bugs
 
-Open an [issue](https://github.com/8gramlabs/SCDA360pcport/issues) and include:
+Open an [issue](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues) and include:
 
 - **Screenshots or a short video** of the bug.
 - **Where it happened**: the mission and the area.
@@ -152,8 +154,8 @@ Open an [issue](https://github.com/8gramlabs/SCDA360pcport/issues) and include:
 
 ## Ideas
 
-Have an idea or a feature you'd like to see? Post it in [Ideas](https://github.com/8gramlabs/SCDA360pcport/discussions/categories/ideas).
-Bugs go in [Issues](https://github.com/8gramlabs/SCDA360pcport/issues) (see above).
+Have an idea or a feature you'd like to see? Open an [issue](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues/new) starting the title with "Idea:".
+Bugs go in [Issues](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues) too (see above).
 
 ## Coming next
 
@@ -168,7 +170,7 @@ Roughly in this order:
 > **No game files come with this project.** You need your own copy of *Splinter Cell: Double Agent* for Xbox 360.
 > It's made for the **USA, Europe** disc (as an `.iso` file). Other versions won't work.
 
-1. Download `SCDA_Setup.exe` from the [latest release](https://github.com/8gramlabs/SCDA360pcport/releases/latest)
+1. Download `SCDA_Setup.exe` from the [latest release](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest)
    (or build it yourself, see below).
    The installer isn't code-signed, so Windows or your antivirus may warn about it. If Windows says "Windows
    protected your PC", click **More info**, then **Run anyway**.
@@ -183,7 +185,7 @@ brightness and contrast stay on the OPTIONS page), or any time with **F1** or **
   distance and clean goggles.
 - **Graphics:** quality presets (Low to Ultra), extra smoothing (FXAA, on top of the game's own 4x anti-aliasing),
   sharpening, and upscaling (renders at a lower resolution and scales it up, for slower PCs).
-- **Update:** your version and the newest version on GitHub. After you sign in at the main menu, a small message in
+- **Update:** your version and the newest released version. After you sign in at the main menu, a small message in
   the top right tells you if there's an update.
 
 Changes apply right away and are saved. Close the menu with Esc, F1, Start or L3+R3.
@@ -246,9 +248,9 @@ tools\test_runtime.bat
 
 ## Credits
 
-Built on [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and [XenosRecomp](https://github.com/hedge-dev/XenosRecomp),
-with ideas from [UnleashedRecomp](https://github.com/hedge-dev/UnleashedRecomp), all by hedge-dev. A lot of what we
-know about the Xbox 360 hardware comes from [Xenia](https://github.com/xenia-project/xenia). Sound decoding uses
+Built on XenonRecomp and XenosRecomp,
+with ideas from UnleashedRecomp, all by hedge-dev. A lot of what we
+know about the Xbox 360 hardware comes from the Xenia emulator project. Sound decoding uses
 [FFmpeg](https://ffmpeg.org). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The source code is licensed under
 **GPL-3.0** ([`LICENSE`](LICENSE)).
 
