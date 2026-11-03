@@ -265,6 +265,18 @@ Evidence paths under `_run/` are local only (git-ignored).
     `SCDA_AUTOPRESS=900:A,1000:A,1100:A,1200:A,1300:A,1450:LY=1:90`, frame 1700): raw z gives Moss, Sam and chair floor
     shadows like the 360 (`hq1.mp4` ~140 s); default has none (`_run/shadow/wood/moss2.png`). So raw z (0) is right
     for HQ. Remaining before making it default: Kinshasa01's sunlit ground goes dark with raw z.
+  - **Kinshasa under raw z (2026-11-02 late):** debug override of PS 63053924 (`_run/shadow/kin/dbg`, out = B, s13, vertex
+    term, A; `kdbg.png`): car and left wall have no lightmap (s13 036FA000 black) and vertex term 0, so their light is
+    `min(B, A)` with B = the cleared alpha. The vertex term is legitimately 0: VS c47defcd takes the N.L path only when VS
+    bool b7 is set (`if (b7 != 0) pc = 9`, r8.xy = c242.zw*(1 - sat(N.L)*c242.x)); the title's VS bools are 0x600/0x610/
+    0x621 (bit 7 never set, `SCDA_TRACE_PS` log `_run/shadow/kin/tps.log`); else r8 = (-|x| > c255.w) = 0 (VS c255.w 0).
+    Forcing b7 (`_run/shadow/kin/ovb7`) relights car + wall under raw z (`kb7.png`) but that is a fake. The ground is
+    another PS (not 63053924), still dark.
+  - So with a clear of 0, B = 0 and nothing in Kinshasa's alley is lit, yet HQ needs a low clear. One explanation that
+    fits both: on hardware the mask keeps older EDRAM contents (HQ: its 1024 shadow map at EDRAM 0xE0 spans tiles
+    224-1055 and overwrites the mask's 448-631 every frame; Kinshasa's 512 map at 0xE0 ends at 447, so the mask keeps
+    last frame's A = c0.w). That needs EDRAM aliasing between surfaces, which we do not emulate (Xenia does and is dark,
+    so not proven). Unresolved.
 
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 
