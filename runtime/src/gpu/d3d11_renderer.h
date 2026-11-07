@@ -60,6 +60,10 @@ public:
         bool fxaa = false;
         bool upscale = false;
         float sharpness = 0.0f;
+        // Display calibration ([Display] Gamma / Brightness, 1 = as the console): folded into the
+        // title's display gamma ramp LUT, out = (ramp * brightness) ^ (1 / gamma).
+        float gamma = 1.0f;
+        float brightness = 1.0f;
     };
     void SetPostFx(const PostFx& fx) { m_postFx = fx; }
     // Internal resolution scale (1-4), changed between guest frames: resolve copies are rescaled, EDRAM

@@ -26,6 +26,12 @@ struct DisplaySettings
     // [Display] Upscaling=Off|Native|Quality|Balanced|Performance|UltraPerformance: Off uses Scale;
     // the others pick Scale from the window height (UpscalingScale) and upscale to the window.
     enum Upscaling { UpOff, UpNative, UpQuality, UpBalanced, UpPerformance, UpUltraPerformance } upscaling = UpOff;
+    // Display calibration, 1 = as the console ([Display] Gamma=0.5..2.0, Brightness=0.5..2.0).
+    float gamma = 1.0f;
+    float brightness = 1.0f;
+    // [Display] PerformanceOverlay=Off|FPS|Detailed: corner overlay (fps; + frame time, CPU, resolution).
+    enum Overlay { OverlayOff, OverlayFps, OverlayDetailed } performanceOverlay = OverlayOff;
+    uint32_t monitor = 0; // [Display] Monitor=0..7: 0 primary, then the other displays (next start)
 };
 
 // Internal resolution scale for an upscaling mode: the window height divided by the mode's ratio

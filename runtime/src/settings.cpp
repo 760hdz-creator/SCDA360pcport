@@ -107,6 +107,24 @@ DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini)
             if (v >= 0 && v <= 100)
                 s.sharpening = uint32_t(v);
         }
+        else if (key == "gamma" || key == "brightness")
+        {
+            const float v = float(atof(value.c_str()));
+            if (v >= 0.5f && v <= 2.0f)
+                (key == "gamma" ? s.gamma : s.brightness) = v;
+        }
+        else if (key == "performanceoverlay")
+        {
+            if (value == "off" || value == "0") s.performanceOverlay = DisplaySettings::OverlayOff;
+            else if (value == "fps" || value == "1") s.performanceOverlay = DisplaySettings::OverlayFps;
+            else if (value == "detailed" || value == "2") s.performanceOverlay = DisplaySettings::OverlayDetailed;
+        }
+        else if (key == "monitor")
+        {
+            const int v = atoi(value.c_str());
+            if (v >= 0 && v <= 7)
+                s.monitor = uint32_t(v);
+        }
         else if (key == "upscaling")
         {
             for (int m = DisplaySettings::UpOff; m <= DisplaySettings::UpUltraPerformance; m++)

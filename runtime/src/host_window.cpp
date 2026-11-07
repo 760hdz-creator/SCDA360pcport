@@ -18,6 +18,25 @@
 #include <overlay.h>
 #include <runtime.h>
 
+
+// The n-th display (0 = primary, then the others in EnumDisplayMonitors order); the primary when
+// there is no such display.
+static HMONITOR DisplayMonitor(uint32_t n)
+{
+    std::vector<HMONITOR> all;
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR m, HDC, LPRECT, LPARAM p) -> BOOL
+    {
+        reinterpret_cast<std::vector<HMONITOR>*>(p)->push_back(m);
+        return TRUE;
+    }, LPARAM(&all));
+    const HMONITOR primary = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    std::vector<HMONITOR> ordered{ primary };
+    for (HMONITOR m : all)
+        if (m != primary)
+            ordered.push_back(m);
+    return n < ordered.size() ? ordered[n] : primary;
+}
+
 static std::atomic<HWND> g_hwnd;
 static std::atomic<uint32_t> g_resizeW, g_resizeH;
 static bool g_mouseLook;   // capture the cursor and feed raw motion to the right stick
@@ -120,8 +139,10 @@ static void WindowThread(DisplaySettings s)
     RegisterClassExW(&wc);
 
     DWORD style = s.mode == DisplaySettings::Windowed ? WS_OVERLAPPEDWINDOW : WS_POPUP;
-    RECT work{};
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    // [Display] Monitor=<n>: 0 = the primary display, 1.. = the others in enumeration order.
+    MONITORINFO mi{ sizeof(mi) };
+    GetMonitorInfoW(DisplayMonitor(s.monitor), &mi);
+    RECT work = mi.rcWork;
     RECT frame{ 0, 0, 0, 0 };
     AdjustWindowRect(&frame, style, FALSE);
     auto [cw, ch] = WindowClientSize(uint32_t(work.right - work.left - (frame.right - frame.left)),
@@ -130,11 +151,19 @@ static void WindowThread(DisplaySettings s)
     int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
     if (s.mode != DisplaySettings::Windowed)
     {
-        r = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
-        x = y = 0;
+        r = { 0, 0, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top };
+        x = mi.rcMonitor.left;
+        y = mi.rcMonitor.top;
     }
     else
+    {
         AdjustWindowRect(&r, style, FALSE);
+        if (s.monitor) // centred on the chosen display (CW_USEDEFAULT always picks the primary)
+        {
+            x = work.left + ((work.right - work.left) - (r.right - r.left)) / 2;
+            y = work.top + ((work.bottom - work.top) - (r.bottom - r.top)) / 2;
+        }
+    }
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Splinter Cell: Double Agent Recomp", style, x, y,
         r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, nullptr);
     ShowWindow(hwnd, SW_SHOW);

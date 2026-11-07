@@ -61,6 +61,7 @@ bool g_wasOpen;     // the menu was open at the last poll (render thread)
 
 const char* const kModeNames[] = { "Windowed", "Borderless", "Fullscreen" };
 const char* const kModeIni[] = { "windowed", "borderless", "fullscreen" };
+const char* const kOverlayNames[] = { "Off", "FPS", "Detailed" };
 const char* const kUpscalingLabels[] = { "Off (use Internal resolution)", "Native", "Quality (1.5x)", "Balanced (1.7x)", "Performance (2x)",
                                          "Ultra Performance (3x)" };
 
@@ -73,6 +74,8 @@ void Apply(const DisplaySettings& s)
     fx.fxaa = s.antiAliasing == DisplaySettings::AaFxaa;
     fx.upscale = s.upscaling != DisplaySettings::UpOff;
     fx.sharpness = float(s.sharpening) / 100.0f;
+    fx.gamma = s.gamma;
+    fx.brightness = s.brightness;
     g_renderer->SetPostFx(fx);
     if (const uint32_t scale = EffectiveScale(s); scale != g_renderer->Scale())
         g_renderer->SetScale(scale);
@@ -108,6 +111,15 @@ void Save(const DisplaySettings& before, const DisplaySettings& after)
         save("Sharpening", std::to_string(after.sharpening));
     if (before.upscaling != after.upscaling)
         save("Upscaling", UpscalingName(after.upscaling));
+    char buf[16];
+    if (before.gamma != after.gamma)
+        snprintf(buf, sizeof(buf), "%.2f", after.gamma), save("Gamma", buf);
+    if (before.brightness != after.brightness)
+        snprintf(buf, sizeof(buf), "%.2f", after.brightness), save("Brightness", buf);
+    if (before.performanceOverlay != after.performanceOverlay)
+        save("PerformanceOverlay", kOverlayNames[after.performanceOverlay]);
+    if (before.monitor != after.monitor)
+        save("Monitor", std::to_string(after.monitor));
 }
 
 std::string Resolution(uint32_t scale) { return std::to_string(1280 * scale) + "x" + std::to_string(720 * scale); }
@@ -131,6 +143,22 @@ void DisplayTab(DisplaySettings& s)
     if (ImGui::Combo("Window mode", &mode, kModeNames, 3))
         s.mode = DisplaySettings::Mode(mode);
     Hint("Applies the next time the game starts.");
+    const int monitors = std::clamp(GetSystemMetrics(SM_CMONITORS), 1, 8);
+    int monitor = std::min(int(s.monitor), monitors - 1);
+    if (monitors > 1 && ImGui::SliderInt("Display", &monitor, 0, monitors - 1, monitor == 0 ? "%d (primary)" : "%d"))
+        s.monitor = uint32_t(monitor);
+    if (monitors > 1)
+        Hint("Which monitor the game opens on. Applies the next time the game starts.");
+    ImGui::SliderFloat("Brightness", &s.brightness, 0.5f, 2.0f, s.brightness == 1.0f ? "%.2f (default)" : "%.2f");
+    Hint("Scales the final image before gamma. 1.00 = as on the console. Double-click to type a value.");
+    ImGui::SliderFloat("Gamma", &s.gamma, 0.5f, 2.0f, s.gamma == 1.0f ? "%.2f (default)" : "%.2f");
+    Hint("Above 1 lifts dark areas (shadows stay readable on bright monitors), below 1 deepens them. 1.00 = as on the console.");
+    if (ImGui::Button("Reset brightness and gamma"))
+        s.gamma = s.brightness = 1.0f;
+    int perf = s.performanceOverlay;
+    if (ImGui::Combo("Performance overlay", &perf, kOverlayNames, 3))
+        s.performanceOverlay = DisplaySettings::Overlay(perf);
+    Hint("Corner readout: FPS, or FPS + frame time, CPU use of the game and resolution.");
     ImGui::Checkbox("VSync", &s.vsync);
     ImGui::BeginDisabled(s.upscaling != DisplaySettings::UpOff);
     int scale = int(s.scale);
@@ -233,6 +261,44 @@ void StartInstall()
         g_installError = error;
         g_installing = false;
     }).detach();
+}
+
+// [Display] PerformanceOverlay: fps (frames presented to the window), frame time, and in Detailed
+// the process CPU use (all cores = 100%, sampled each second) and the resolutions.
+void PerformanceOverlay()
+{
+    if (g_settings.performanceOverlay == DisplaySettings::OverlayOff)
+        return;
+    static double cpu = 0.0;
+    static ULONGLONG lastTick, lastCpu;
+    if (const ULONGLONG now = GetTickCount64(); now - lastTick >= 1000)
+    {
+        FILETIME c, e, k, u;
+        GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
+        const ULONGLONG used = (ULONGLONG(k.dwHighDateTime) << 32 | k.dwLowDateTime) + (ULONGLONG(u.dwHighDateTime) << 32 | u.dwLowDateTime);
+        SYSTEM_INFO si;
+        GetSystemInfo(&si);
+        if (lastTick)
+            cpu = 100.0 * double(used - lastCpu) / (double(now - lastTick) * 10000.0 * si.dwNumberOfProcessors);
+        lastTick = now;
+        lastCpu = used;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetFontSize() * 0.5f, ImGui::GetFontSize() * 0.5f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.45f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("##perf", nullptr, flags))
+    {
+        ImGui::Text("%.0f FPS", io.Framerate);
+        if (g_settings.performanceOverlay == DisplaySettings::OverlayDetailed)
+        {
+            ImGui::Text("%.1f ms/frame", io.Framerate > 0.0f ? 1000.0f / io.Framerate : 0.0f);
+            ImGui::Text("CPU %.0f%%", cpu);
+            ImGui::Text("%s -> %ux%u", Resolution(EffectiveScale(g_settings)).c_str(), g_renderer->Width(), g_renderer->Height());
+        }
+    }
+    ImGui::End();
 }
 
 void UpdateTab()
@@ -531,6 +597,7 @@ void Draw()
         Menu();
     else
         Toast();
+    PerformanceOverlay();
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
@@ -565,7 +632,7 @@ void OverlayAttach(D3D11Renderer& renderer, HWND hwnd, const DisplaySettings& se
         Apply(g_settings);
         PollPadCombo();
         // Nothing to draw: no ImGui frame at all (the plain game image, no cost).
-        if (!g_open && !ToastVisible())
+        if (!g_open && !ToastVisible() && g_settings.performanceOverlay == DisplaySettings::OverlayOff)
             return;
         if (!g_imgui)
             InitImGui();

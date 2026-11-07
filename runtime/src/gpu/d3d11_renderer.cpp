@@ -387,6 +387,7 @@ struct DrawResources
     std::unordered_map<uint64_t, ComPtr<ID3D11ShaderResourceView>> averageTextures;
     ComPtr<ID3D11ShaderResourceView> gammaRampSrv;
     uint32_t gammaRampVersion = ~0u;
+    float gammaRampGamma = 1.0f, gammaRampBrightness = 1.0f; // PostFx calibration baked into the LUT
     ComPtr<ID3D11GeometryShader> rectListGs;
     ComPtr<ID3D11GeometryShader> pointListGs;
     ComPtr<ID3D11PixelShader> zeroPs; // aliased depth-only clears: returns 1 (x blend factor), never kills
@@ -2996,12 +2997,24 @@ void D3D11Renderer::Blit(ID3D11ShaderResourceView* source)
     // SCDA_NO_GAMMA_RAMP=1: identity ramp (A/B against the title's display gamma ramp).
     static const bool noRamp = getenv("SCDA_NO_GAMMA_RAMP") != nullptr;
     const uint32_t version = noRamp ? 0 : DisplayGammaRamp().version.load();
-    if (version != r.gammaRampVersion)
+    const float gamma = std::clamp(m_postFx.gamma, 0.5f, 2.0f), brightness = std::clamp(m_postFx.brightness, 0.5f, 2.0f);
+    if (version != r.gammaRampVersion || gamma != r.gammaRampGamma || brightness != r.gammaRampBrightness)
     {
         r.gammaRampVersion = version;
+        r.gammaRampGamma = gamma;
+        r.gammaRampBrightness = brightness;
         std::array<uint32_t, 256> entries = noRamp ? GammaRamp().entries : DisplayGammaRamp().Copy();
+        const bool adjust = gamma != 1.0f || brightness != 1.0f;
         for (auto& e : entries)
+        {
+            if (adjust) // each 10-bit channel (R bits 0-9, G 10-19, B 20-29)
+                for (int c = 0; c < 3; c++)
+                {
+                    const float v = std::pow(std::min(1.0f, float((e >> (10 * c)) & 0x3FF) / 1023.0f * brightness), 1.0f / gamma);
+                    e = (e & ~(0x3FFu << (10 * c))) | (uint32_t(v * 1023.0f + 0.5f) << (10 * c));
+                }
             e |= 3u << 30;
+        }
         m_context->UpdateSubresource(r.gammaRamp.Get(), 0, nullptr, entries.data(), sizeof(entries), 0);
     }
     if (r.postPs && (m_postFx.fxaa || m_postFx.upscale || m_postFx.sharpness > 0.0f))
