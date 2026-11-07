@@ -186,6 +186,7 @@ public:
             if (p != m_persist.end())
             {
                 p->second.lastFrame = m_next;
+                m_persistTouched[m_next % kPersistBuckets].push_back(key);
                 statKeepCmp++; statKeepCmpBytes += bytes;
                 const auto& last = p->second.snapshot.Bytes();
                 if (last.size() == bytes && !memcmp(last.data(), data, bytes))
@@ -198,7 +199,10 @@ public:
         statCopy++; statCopyBytes += bytes;
         Frame::Snapshot s{ key, std::make_shared<const std::vector<uint8_t>>(data, data + bytes), ++m_snapshotId };
         if (!noPersist)
+        {
             m_persist[key] = { s, m_next };
+            m_persistTouched[m_next % kPersistBuckets].push_back(key);
+        }
         m_open.memory.push_back(std::move(s));
         return it->second.index;
     }
@@ -276,6 +280,7 @@ public:
     // guest physical address VdSwap presents (0 = unknown).
     void EndFrame(uint32_t frontbuffer = 0)
     {
+        std::vector<Persisted> expired; // freed after the lock is released
         std::lock_guard lock(m_mutex);
         TimelineEvent('E', uint32_t(m_open.draws.size()));
         m_open.frontbuffer = frontbuffer;
@@ -291,8 +296,18 @@ public:
                 (unsigned long long)m_open.stats.frame, statSkip, statCmp, statCmpBytes >> 10, statDiff, statDiffBytes >> 10, statKeepCmp,
                 statKeepCmpBytes >> 10, statCopy, statCopyBytes >> 10, m_persist.size(), m_open.regWrites.size(), m_open.draws.size());
         statSkip = statCmp = statCmpBytes = statDiff = statDiffBytes = statCopy = statCopyBytes = statKeepCmp = statKeepCmpBytes = 0;
-        if (m_next % 32 == 0) // ranges unused for a while (a level change) free their copies
-            std::erase_if(m_persist, [&](const auto& p) { return p.second.lastFrame + kPersistFrames < m_next; });
+        // Ranges unused for kPersistFrames frames free their copies. Only the keys touched in the frame
+        // that just expired are checked (a key touched later has a newer lastFrame and stays). This was
+        // one erase_if over ~200k entries every 32 frames: a 20-30 ms CP stall under this lock, i.e. a
+        // 50-67 ms frame about once a second (Okhotsk_02, newyork_02).
+        std::vector<uint64_t>& bucket = m_persistTouched[(m_next + kPersistBuckets - kPersistFrames - 1) % kPersistBuckets];
+        for (uint64_t key : bucket)
+            if (auto p = m_persist.find(key); p != m_persist.end() && p->second.lastFrame + kPersistFrames < m_next)
+            {
+                expired.push_back(std::move(p->second));
+                m_persist.erase(p);
+            }
+        bucket.clear();
         m_handOvers++;
         m_done.push_back(std::move(m_open));
         m_open = Frame{};
@@ -461,7 +476,8 @@ private:
         Frame::Snapshot snapshot;
         uint64_t lastFrame; // m_next when last used: unused for kPersistFrames = dropped
     };
-    static constexpr uint64_t kPersistFrames = 30;
+    static constexpr uint64_t kPersistFrames = 30, kPersistBuckets = kPersistFrames + 2;
+    std::vector<uint64_t> m_persistTouched[kPersistBuckets]; // keys stamped with lastFrame = index (mod kPersistBuckets)
     std::unordered_map<uint64_t, Persisted> m_persist; // range key -> its latest copy, across frames
     uint64_t m_snapshotId = 0;
     uint64_t m_epoch = 0;
