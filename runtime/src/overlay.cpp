@@ -352,7 +352,9 @@ void UpdateTab()
     bool autoInstall = LoadUpdateSettings(SettingsPath()).autoInstall;
     if (ImGui::Checkbox("Install updates automatically at startup", &autoInstall))
         SaveSetting(SettingsPath(), "Update", "AutoInstall", autoInstall ? "1" : "0");
-    ImGui::TextDisabled("Releases: gitlab.com/%s", updater::Repo().c_str());
+    if (!st.source.empty())
+        ImGui::TextDisabled("Latest release found on %s", st.source.c_str());
+    ImGui::TextDisabled("Checks gitlab.com/%s and github.com/%s", updater::Repo().c_str(), updater::GitHubRepo().c_str());
 }
 
 void Menu()

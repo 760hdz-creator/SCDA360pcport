@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SCDARecomp VERSION 0.1.7 LANGUAGES CXX C)
+project(SCDARecomp VERSION 0.1.8 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,6 +29,7 @@ endif()
 
 # This build's version (F1 menu > Update compares it with the latest GitLab release of SCDA_UPDATE_REPO).
 set(SCDA_UPDATE_REPO "octagram-labs-group/SCDA360pcport" CACHE STRING "GitLab group/name the update check asks" FORCE)
+set(SCDA_UPDATE_GITHUB_REPO "8gramlabs/SCDA360pcport" CACHE STRING "GitHub owner/name the update check also asks (empty = none)")
 
 # SDL3 (zlib): native PlayStation / Switch / other gamepads (src/pad.cpp), linked static so an
 # update that replaces scda.exe alone carries it. Source: external/SDL (github.com/libsdl-org/SDL
@@ -134,5 +135,5 @@ add_test(NAME scda_tests COMMAND scda_tests)
 # XenosRecomp fork (MIT): fmt header-only from XenonRecomp's thirdparty.
 foreach(t scda scda_tests)
     target_include_directories(${t} PRIVATE "${XENON_ROOT}/thirdparty/fmt/include")
-    target_compile_definitions(${t} PRIVATE FMT_HEADER_ONLY SCDA_VERSION="${PROJECT_VERSION}" SCDA_UPDATE_REPO="${SCDA_UPDATE_REPO}")
+    target_compile_definitions(${t} PRIVATE FMT_HEADER_ONLY SCDA_VERSION="${PROJECT_VERSION}" SCDA_UPDATE_REPO="${SCDA_UPDATE_REPO}" SCDA_UPDATE_GITHUB_REPO="${SCDA_UPDATE_GITHUB_REPO}")
 endforeach()

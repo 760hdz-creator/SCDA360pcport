@@ -1,5 +1,5 @@
 // Update check (F1 menu, Update tab, and a notification at startup): the latest release of the
-// port's GitLab project (SCDA_UPDATE_REPO, group/name; [Update] Repo= in settings.ini overrides
+// port's GitLab project and its GitHub repository, both asked, higher version wins (SCDA_UPDATE_REPO, group/name; [Update] Repo= in settings.ini overrides
 // it), compared with this build's version (SCDA_VERSION). Only a strictly higher version counts as
 // an update. InstallUpdate downloads the release's SCDA_Setup.exe and runs its update mode.
 #pragma once
@@ -16,10 +16,13 @@ struct Status
     std::string title;  // the release's name
     std::string error;  // Failed: why
     std::string installerUrl; // the release's SCDA_Setup.exe download, empty if it has none
+    std::string fallbackUrl;  // the other source's installer for the same version, if any
+    std::string source;       // where the offered release came from: "GitLab" / "GitHub"
 };
 
 const char* CurrentVersion();
-const std::string& Repo();
+const std::string& Repo();       // GitLab group/name
+const std::string& GitHubRepo(); // GitHub owner/name, also asked (SCDA_UPDATE_GITHUB_REPO; empty = not asked)
 // https://gitlab.com/<repo>/-/releases/permalink/latest.
 std::string ReleasePageUrl();
 Status Get();

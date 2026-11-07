@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <algorithm>
 #include <vector>
 #include <runtime.h>
 #include <settings.h>
@@ -13,6 +14,9 @@
 
 #ifndef SCDA_VERSION
 #define SCDA_VERSION "0.0.0"
+#endif
+#ifndef SCDA_UPDATE_GITHUB_REPO
+#define SCDA_UPDATE_GITHUB_REPO "8gramlabs/SCDA360pcport"
 #endif
 #ifndef SCDA_UPDATE_REPO
 #define SCDA_UPDATE_REPO "octagram-labs-group/SCDA360pcport"
@@ -104,14 +108,15 @@ std::string UrlEncode(const std::string& s)
     return out;
 }
 
-// direct_asset_url of the release link named SCDA_Setup.exe; empty if the release has none.
-std::string InstallerUrl(const std::string& json)
+// The installer URL in a release JSON: the value of `key` after the asset named SCDA_Setup.exe
+// (GitLab assets.links[] direct_asset_url; GitHub assets[] browser_download_url, which follows a
+// nested "uploader" object, so this looks ahead rather than to the object's end). Empty if none.
+std::string InstallerUrl(const std::string& json, const std::string& key)
 {
     const size_t name = json.find("\"name\":\"SCDA_Setup.exe\"");
     if (name == std::string::npos)
         return {};
-    const size_t end = json.find('}', name);
-    return JsonString(json.substr(name, end == std::string::npos ? std::string::npos : end - name), "direct_asset_url");
+    return JsonString(json.substr(name, 4096), key);
 }
 
 void Set(const Status& s)
@@ -120,39 +125,93 @@ void Set(const Status& s)
     g_status = s;
 }
 
+// One source's latest release.
+struct Candidate
+{
+    std::string source; // "GitLab" / "GitHub"
+    bool ok = false;    // answered with a tagged release
+    bool none = false;  // answered: no release published
+    std::string version, title, installerUrl, error;
+};
+
+Candidate Fetch(bool gitlab)
+{
+    Candidate c;
+    c.source = gitlab ? "GitLab" : "GitHub";
+    const std::string url = gitlab ? "https://gitlab.com/api/v4/projects/" + UrlEncode(Repo()) + "/releases/permalink/latest"
+                                   : "https://api.github.com/repos/" + GitHubRepo() + "/releases/latest";
+    DWORD code = 0;
+    std::string body;
+    if (!HttpGet(url, code, body, c.error))
+        return c;
+    if (code == 404)
+    {
+        c.none = true; // no release, or the project is gone / private
+        return c;
+    }
+    if (code != 200)
+    {
+        c.error = c.source + " answered " + std::to_string(code) + (code == 403 || code == 429 ? " (rate limit, try later)" : "");
+        return c;
+    }
+    c.version = JsonString(body, "tag_name");
+    if (!c.version.empty() && (c.version[0] == 'v' || c.version[0] == 'V'))
+        c.version.erase(0, 1);
+    if (c.version.empty())
+    {
+        c.error = c.source + "'s release has no tag";
+        return c;
+    }
+    c.title = JsonString(body, "name");
+    c.installerUrl = InstallerUrl(body, gitlab ? "direct_asset_url" : "browser_download_url");
+    c.ok = true;
+    return c;
+}
+
+// Asks GitLab and GitHub at once (either may be down or gone); the higher version wins, and for the
+// same version GitLab (the project's home) unless only GitHub has the installer. The other source
+// with the same version stays as the download fallback.
 void RunCheck()
 {
+    Candidate lab, hub;
+    std::thread labThread([&] { lab = Fetch(true); });
+    if (!GitHubRepo().empty())
+        hub = Fetch(false);
+    labThread.join();
+    for (const Candidate* c : { &lab, &hub })
+        if (!c->source.empty())
+            RuntimeLog("[update] %s: %s\n", c->source.c_str(), c->ok ? ("release " + c->version + (c->installerUrl.empty() ? ", no installer" : ", installer")).c_str()
+                                                                  : c->none ? "no release" : c->error.c_str());
+    std::vector<const Candidate*> offers;
+    for (const Candidate* c : { &lab, &hub })
+        if (c->ok)
+            offers.push_back(c);
+    std::stable_sort(offers.begin(), offers.end(), [](const Candidate* x, const Candidate* y)
+    {
+        if (const int v = CompareVersions(x->version, y->version))
+            return v > 0;
+        return !x->installerUrl.empty() && y->installerUrl.empty(); // same version: the one with an installer
+    });
     Status s;
-    DWORD code = 0;
-    std::string body, error;
-    if (!HttpGet("https://gitlab.com/api/v4/projects/" + UrlEncode(Repo()) + "/releases/permalink/latest", code, body, error))
+    if (offers.empty())
     {
-        s.state = State::Failed;
-        s.error = error;
-    }
-    else if (code == 404)
-        s.state = State::NoReleases;
-    else if (code != 200)
-    {
-        s.state = State::Failed;
-        s.error = "GitLab answered " + std::to_string(code) + (code == 403 || code == 429 ? " (rate limit, try later)" : "");
+        const bool none = lab.none && (hub.source.empty() || hub.none || !hub.error.empty());
+        s.state = none ? State::NoReleases : State::Failed;
+        s.error = lab.error.empty() ? hub.error : hub.error.empty() || hub.source.empty() ? lab.error : "GitLab: " + lab.error + "; GitHub: " + hub.error;
     }
     else
     {
-        s.latest = JsonString(body, "tag_name");
-        if (!s.latest.empty() && (s.latest[0] == 'v' || s.latest[0] == 'V'))
-            s.latest.erase(0, 1);
-        s.title = JsonString(body, "name");
-        s.installerUrl = InstallerUrl(body);
-        if (s.latest.empty())
-        {
-            s.state = State::Failed;
-            s.error = "the release has no tag";
-        }
-        else
-            s.state = CompareVersions(s.latest, CurrentVersion()) > 0 ? State::Available : State::UpToDate;
+        const Candidate& best = *offers[0];
+        s.latest = best.version;
+        s.title = best.title;
+        s.source = best.source;
+        s.installerUrl = best.installerUrl;
+        if (offers.size() > 1 && CompareVersions(offers[1]->version, best.version) == 0)
+            s.fallbackUrl = offers[1]->installerUrl;
+        s.state = CompareVersions(s.latest, CurrentVersion()) > 0 ? State::Available : State::UpToDate;
     }
-    RuntimeLog("[update] %s: state %d latest '%s'%s%s\n", Repo().c_str(), int(s.state), s.latest.c_str(), s.error.empty() ? "" : " ", s.error.c_str());
+    RuntimeLog("[update] state %d latest '%s' from %s%s%s\n", int(s.state), s.latest.c_str(), s.source.empty() ? "-" : s.source.c_str(),
+        s.error.empty() ? "" : " ", s.error.c_str());
     Set(s);
 }
 
@@ -171,6 +230,15 @@ const std::string& Repo()
         std::string r = LoadUpdateSettings(SettingsPath()).repo;
         return r.empty() ? std::string(SCDA_UPDATE_REPO) : r;
     }();
+    return repo;
+}
+
+const std::string& GitHubRepo()
+{
+    // SCDA_NO_GITHUB_UPDATE=1 skips GitHub; SCDA_UPDATE_GITHUB_REPO=<owner/name> asks another repo (tests).
+    static const std::string repo = getenv("SCDA_NO_GITHUB_UPDATE") ? std::string()
+                                  : getenv("SCDA_UPDATE_GITHUB_REPO") ? std::string(getenv("SCDA_UPDATE_GITHUB_REPO"))
+                                                                      : std::string(SCDA_UPDATE_GITHUB_REPO);
     return repo;
 }
 
@@ -258,21 +326,39 @@ bool InstallUpdate(std::string& error)
     GetTempPathW(MAX_PATH, temp);
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     const std::wstring setup = std::wstring(temp) + L"SCDA_Setup_update.exe";
-    HANDLE file = CreateFileW(setup.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = CreateFileW(setup.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)
     {
         error = "cannot write the installer to %TEMP%";
         return false;
     }
-    DWORD code = 0;
-    std::string body;
-    const bool got = HttpGet(st.installerUrl, code, body, error, file);
-    const DWORD bytes = GetFileSize(file, nullptr);
-    CloseHandle(file);
-    if (!got || code != 200 || bytes < (1u << 20))
+    // The chosen source first, then the other one offering the same version. The file must be a
+    // Windows program ("MZ", over 1 MB): neither source gives a checksum we check.
+    bool done = false;
+    for (const std::string& url : { st.installerUrl, st.fallbackUrl })
     {
-        if (got)
-            error = "download failed (HTTP " + std::to_string(code) + ")";
+        if (url.empty() || done)
+            continue;
+        SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+        SetEndOfFile(file);
+        DWORD code = 0;
+        std::string body;
+        const bool got = HttpGet(url, code, body, error, file);
+        char mz[2] = {};
+        DWORD read = 0;
+        SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+        ReadFile(file, mz, 2, &read, nullptr);
+        done = got && code == 200 && GetFileSize(file, nullptr) > (1u << 20) && mz[0] == 'M' && mz[1] == 'Z';
+        if (!done)
+        {
+            if (got)
+                error = "download failed (HTTP " + std::to_string(code) + ")";
+            RuntimeLog("[update] download %s: %s\n", url.c_str(), error.c_str());
+        }
+    }
+    CloseHandle(file);
+    if (!done)
+    {
         DeleteFileW(setup.c_str());
         return false;
     }
@@ -280,7 +366,7 @@ bool InstallUpdate(std::string& error)
     dir.resize(dir.find_last_of(L"\\/"));
     // The installer waits for this process to exit, swaps scda.exe, then starts the game again.
     const std::wstring args = L"--update --dir \"" + dir + L"\" --wait-pid " + std::to_wstring(GetCurrentProcessId()) + L" --relaunch";
-    RuntimeLog("[update] installing %s from %s\n", st.latest.c_str(), st.installerUrl.c_str());
+    RuntimeLog("[update] installing %s (%s)\n", st.latest.c_str(), st.source.c_str());
     if (intptr_t(ShellExecuteW(nullptr, L"open", setup.c_str(), args.c_str(), nullptr, SW_SHOWNORMAL)) <= 32)
     {
         error = "could not start the installer";
