@@ -246,19 +246,26 @@ void GraphicsTab(DisplaySettings& s)
 // Update install (F1 > Update, or [Update] AutoInstall=1): download in the background, then exit so
 // the installer (waiting on this process) can swap scda.exe and start the game again.
 std::atomic<bool> g_installing{ false };
-std::string g_installError;
+std::mutex g_installMutex;
+std::string g_installError; // under g_installMutex (install thread writes, render thread reads)
 
 void StartInstall()
 {
     if (g_installing.exchange(true))
         return;
-    g_installError.clear();
+    {
+        std::lock_guard lock(g_installMutex);
+        g_installError.clear();
+    }
     std::thread([]
     {
         std::string error;
         if (updater::InstallUpdate(error))
             ExitProcess(0);
-        g_installError = error;
+        {
+            std::lock_guard lock(g_installMutex);
+            g_installError = error;
+        }
         g_installing = false;
     }).detach();
 }
@@ -334,8 +341,13 @@ void UpdateTab()
             StartInstall();
         ImGui::EndDisabled();
     }
-    if (!g_installError.empty())
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "Install failed: %s", g_installError.c_str());
+    std::string installError;
+    {
+        std::lock_guard lock(g_installMutex);
+        installError = g_installError;
+    }
+    if (!installError.empty())
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "Install failed: %s", installError.c_str());
     ImGui::Spacing();
     bool autoInstall = LoadUpdateSettings(SettingsPath()).autoInstall;
     if (ImGui::Checkbox("Install updates automatically at startup", &autoInstall))

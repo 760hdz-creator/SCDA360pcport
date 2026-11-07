@@ -41,8 +41,8 @@ This is already in: `[Input] ButtonPrompts=Auto|Xbox|PlayStation|Keyboard`. Auto
 Switch controllers currently get the Xbox-style icons.
 
 ## #17 Texture filtering. Close as already available
-Already there: `[Display] Anisotropy=1-16` (F1 > Display > Anisotropic filtering). Textures are trilinear by default,
-as on the console, and anisotropic filtering goes on top of that.
+Already there: `[Display] Anisotropy=1-16` (F1 > Display > Anisotropic filtering). Each texture otherwise keeps the
+filtering the game asks for, as on the console, and anisotropic filtering is added to the smooth-filtered ones.
 
 ## #11 Upscaling method and quality. Keep open (method)
 The quality presets already exist: `Upscaling=Off|Native|Quality|Balanced|Performance|UltraPerformance`. The method
@@ -57,15 +57,16 @@ the list.
 ## #2 Idea (light meter, duplicate). Already closed
 
 ## #3 Light meter. Keep open
-Possible, but it needs the game's own visibility value found in memory first, so it isn't in this release. On the
-360 version, the light on Sam's back is the stealth meter: green means hidden.
+Possible, but the game's own visibility value has to be found in memory first, so it isn't in this release. On the
+360 version, the light on Sam's back already works as the game's stealth indicator.
 
 ## #9 Add to Steam. Keep open
 Planned for the installer. It has to edit Steam's shortcuts file while Steam is closed, so it will be done carefully.
 
 ## #15 Shadow resolution / #16 Dynamic shadows toggle. Keep open
 The game picks its shadow-map sizes itself. Changing them means patching its rendering code, which we're looking
-into. After the v0.1.6 CPU fix, shadows are much less likely to be the bottleneck.
+into. The CPU fix in v0.1.6 should help low-end PCs in the meantime. If a level still runs slowly, please tell us
+which one.
 
 ## #10 Graphics API (Vulkan/DX12). Won't do for now
 The renderer is Direct3D 11. The CPU load in #4 came from the game's own wait loops, not from DX11, and is fixed in
@@ -82,9 +83,10 @@ SSAO needs a clean depth and normal buffer in the game's pipeline. Possible late
 The game renders in SDR with its own console tonemapping. Real HDR output would need a new tonemapper. Not planned
 yet.
 
-## #6 Achievements. Won't do for now
-This build of the game never writes achievements (it doesn't even import the Xbox function for it), so there's
-nothing to catch. A custom achievement system would need its own design.
+## #6 Achievements. Keep open
+Good news: the game still sends its Xbox 360 achievement unlocks (we've seen one fire during the Intro mission).
+They're dropped right now. Catching them, saving them locally and showing an unlock popup is planned, along with
+the achievement names and pictures from the disc.
 
 ## #8 Discord status toggle. Close (not applicable)
 There's no Discord integration in this port, so nothing is sent to Discord. If you see a status, it comes from

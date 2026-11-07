@@ -245,7 +245,9 @@ SCDA_IMPORT(XamInputGetState)
     PadKind kind = PadKind::None;
     // A scripted run ignores the physical pad as well, so A/B runs stay identical. [Input] Gamepad=0 ignores it always.
     bool connected = script.empty() && mouse.gamepad && PadGetState(g, &kind);
-    if (connected && mouse.gamepadSensitivity != 1.0f) // [Input] GamepadSensitivity: right stick (camera) scale
+    // [Input] GamepadSensitivity: right stick (camera) scale. A stick resting inside the deadzone is left
+    // alone, so drift scaled past the deadzone cannot turn the camera or lock out the mouse (StickIdle below).
+    if (connected && mouse.gamepadSensitivity != 1.0f && !StickIdle(g.sThumbRX, g.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE))
     {
         auto scale = [&](SHORT v) { return SHORT(std::clamp(float(v) * mouse.gamepadSensitivity, -32767.0f, 32767.0f)); };
         g.sThumbRX = scale(g.sThumbRX);
