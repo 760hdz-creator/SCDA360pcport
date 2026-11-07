@@ -23,15 +23,18 @@ class Pm4Payload
 {
     const void* m_obj;
     uint32_t (*m_call)(const void*, uint32_t);
+    const uint32_t* m_raw = nullptr;
 
 public:
+    // raw: the payload's big-endian dwords when contiguous in host memory (indirect buffers), else null.
     template <class F>
         requires(!std::is_same_v<std::remove_cvref_t<F>, Pm4Payload>)
-    Pm4Payload(const F& f)
-        : m_obj(&f), m_call([](const void* o, uint32_t i) -> uint32_t { return (*static_cast<const F*>(o))(i); })
+    Pm4Payload(const F& f, const uint32_t* raw = nullptr)
+        : m_obj(&f), m_call([](const void* o, uint32_t i) -> uint32_t { return (*static_cast<const F*>(o))(i); }), m_raw(raw)
     {
     }
     uint32_t operator()(uint32_t i) const { return m_call(m_obj, i); }
+    const uint32_t* Raw() const { return m_raw; }
 };
 // Returns false to stop before this packet (it is retried on the next walk).
 using Pm4Exec = std::function<bool(uint32_t header, const Pm4Payload& payload)>;

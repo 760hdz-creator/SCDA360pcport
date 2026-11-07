@@ -120,6 +120,18 @@ static void SetGpuRegister(uint32_t index, uint32_t v)
     }
 }
 
+// n consecutive registers from payload dword `first` on (type-0 and SET_CONSTANT runs: thousands of
+// dwords per frame). Reads contiguous payloads straight from memory instead of per-dword calls.
+static void SetRegisterRun(uint32_t base, const Pm4Payload& p, uint32_t first, uint32_t n)
+{
+    if (const uint32_t* raw = p.Raw())
+        for (uint32_t i = 0; i < n; i++)
+            SetGpuRegister(base + i, _byteswap_ulong(raw[first + i]));
+    else
+        for (uint32_t i = 0; i < n; i++)
+            SetGpuRegister(base + i, p(first + i));
+}
+
 FrameQueue& Frames()
 {
     static FrameQueue queue(3);
@@ -307,7 +319,8 @@ static bool WalkIndirect(uint32_t guest, uint32_t dwords, int depth, CpStats& st
         if (i + size > dwords)
             break;
         uint32_t start = i;
-        if (!Execute(h, [&](uint32_t k) { return GuestLoad32(guest + (start + 1 + k) * 4); }, depth, st))
+        auto read = [&](uint32_t k) { return GuestLoad32(guest + (start + 1 + k) * 4); };
+        if (!Execute(h, Pm4Payload(read, (const uint32_t*)GuestPtr(guest + (start + 1) * 4)), depth, st))
         {
             r = { guest, i };
             return false;
@@ -357,9 +370,11 @@ static bool ExecutePacket(uint32_t h, const Pm4Payload& p, int depth, CpStats& s
     case 0:
     {
         uint32_t base = h & 0x7FFF, count = ((h >> 16) & 0x3FFF) + 1;
-        bool one = (h >> 15) & 1;
-        for (uint32_t i = 0; i < count; i++)
-            SetGpuRegister(one ? base : base + i, p(i));
+        if ((h >> 15) & 1) // one register, written count times
+            for (uint32_t i = 0; i < count; i++)
+                SetGpuRegister(base, p(i));
+        else
+            SetRegisterRun(base, p, 0, count);
         st.regWrites += count;
         return true;
     }
@@ -487,13 +502,13 @@ static bool ExecutePacket(uint32_t h, const Pm4Payload& p, int depth, CpStats& s
         }
         return true;
     case kOpSetConstant:
-        for (uint32_t i = 1; i < count; i++)
-            SetGpuRegister(ConstantBase(p(0)) + i - 1, p(i));
+        if (count > 1)
+            SetRegisterRun(ConstantBase(p(0)), p, 1, count - 1);
         return true;
     case kOpSetConstant2:
     case kOpSetShaderConstants:
-        for (uint32_t i = 1; i < count; i++)
-            SetGpuRegister((p(0) & 0xFFFF) + i - 1, p(i));
+        if (count > 1)
+            SetRegisterRun(p(0) & 0xFFFF, p, 1, count - 1);
         return true;
     case kOpLoadAluConstant:
     {
