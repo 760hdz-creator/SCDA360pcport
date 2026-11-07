@@ -23,6 +23,7 @@
 #include <map>
 #include "overlay.h"
 #include "updater.h"
+#include "steam_shortcut.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
@@ -357,6 +358,20 @@ void UpdateTab()
     if (!st.source.empty())
         ImGui::TextDisabled("Latest release found on %s", st.source.c_str());
     ImGui::TextDisabled("Checks gitlab.com/%s and github.com/%s", updater::Repo().c_str(), updater::GitHubRepo().c_str());
+
+    // Issue #9: non-Steam game shortcut (Steam overlay, Steam Input).
+    ImGui::Separator();
+    static std::string steamMessage;
+    static bool steamOk = false;
+    if (ImGui::Button("Add to Steam"))
+        steamOk = steam::AddShortcut(steamMessage);
+    ImGui::SameLine();
+    if (steamMessage.empty())
+        ImGui::TextDisabled("Adds this game to your Steam library as a non-Steam game.");
+    else if (steamOk)
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", steamMessage.c_str());
+    else
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s", steamMessage.c_str());
 }
 
 // Achievement icons (XDBF PNGs) as ImGui textures, per device (a new device drops them).
