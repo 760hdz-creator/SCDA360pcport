@@ -1,7 +1,7 @@
 // Update check (F1 menu, Update tab, and a notification at startup): the latest release of the
-// port's GitHub repository (SCDA_UPDATE_REPO, owner/name; [Update] Repo= in settings.ini overrides
+// port's GitLab project (SCDA_UPDATE_REPO, group/name; [Update] Repo= in settings.ini overrides
 // it), compared with this build's version (SCDA_VERSION). Only a strictly higher version counts as
-// an update. Nothing is downloaded: the menu opens the release page in the browser.
+// an update. InstallUpdate downloads the release's SCDA_Setup.exe and runs its update mode.
 #pragma once
 #include <string>
 
@@ -15,20 +15,25 @@ struct Status
     std::string latest; // the release's version ("0.2.0", tag without a leading v), once checked
     std::string title;  // the release's name
     std::string error;  // Failed: why
+    std::string installerUrl; // the release's SCDA_Setup.exe download, empty if it has none
 };
 
 const char* CurrentVersion();
 const std::string& Repo();
-// https://github.com/<repo>/releases/latest (GitHub sends it to the release list while there is none).
+// https://gitlab.com/<repo>/-/releases/permalink/latest.
 std::string ReleasePageUrl();
 Status Get();
 void Check(); // in the background; ignored while a check runs
 void OpenReleasePage();
+// Blocking: downloads the available release's SCDA_Setup.exe to %TEMP% and starts it with
+// --update --dir <this exe's folder> --wait-pid <this process> --relaunch. True when the installer
+// started: the caller then exits so the installer can replace scda.exe.
+bool InstallUpdate(std::string& error);
 
 // Pure helpers (tests).
 // <0, 0, >0 like strcmp; numeric fields ("0.10.0" > "0.9.1"), a leading v ignored, missing fields 0.
 int CompareVersions(const std::string& a, const std::string& b);
-// The string value of "key" in a GitHub API JSON object (no nesting needed), unescaped; empty if absent.
+// The string value of "key" in a JSON object (no nesting needed), unescaped; empty if absent.
 std::string JsonString(const std::string& json, const std::string& key);
 
 } // namespace updater

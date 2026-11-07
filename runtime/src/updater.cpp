@@ -15,7 +15,7 @@
 #define SCDA_VERSION "0.0.0"
 #endif
 #ifndef SCDA_UPDATE_REPO
-#define SCDA_UPDATE_REPO "8gramlabs/SCDA360pcport"
+#define SCDA_UPDATE_REPO "octagram-labs-group/SCDA360pcport"
 #endif
 
 namespace updater {
@@ -27,22 +27,34 @@ Status g_status;
 
 std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 
-// GET https://api.github.com<path>; false with `error` set when no HTTP answer came back.
-bool HttpGet(const std::string& path, DWORD& statusCode, std::string& body, std::string& error)
+// GET an https URL (redirects followed); the body goes to `body` (max 1 MB) or, with `file`, to that
+// file. False with `error` set when no HTTP answer came back.
+bool HttpGet(const std::string& url, DWORD& statusCode, std::string& body, std::string& error, HANDLE file = nullptr)
 {
-    const std::wstring agent = Widen(std::string("SCDARecomp/") + SCDA_VERSION); // GitHub refuses requests without one
+    const std::wstring wurl = Widen(url);
+    wchar_t host[256] = {}, path[2048] = {};
+    URL_COMPONENTS uc{ sizeof(uc) };
+    uc.lpszHostName = host;
+    uc.dwHostNameLength = 256;
+    uc.lpszUrlPath = path;
+    uc.dwUrlPathLength = 2048;
+    if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &uc))
+    {
+        error = "bad URL " + url;
+        return false;
+    }
+    const std::wstring agent = Widen(std::string("SCDARecomp/") + SCDA_VERSION);
     HINTERNET session = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    HINTERNET connect = session ? WinHttpConnect(session, L"api.github.com", INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
-    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", Widen(path).c_str(), nullptr, WINHTTP_NO_REFERER,
+    HINTERNET connect = session ? WinHttpConnect(session, host, uc.nPort, 0) : nullptr;
+    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
                                                      WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
                                 : nullptr;
     bool ok = false;
     if (request)
     {
-        WinHttpSetTimeouts(request, 5000, 5000, 10000, 10000);
-        const wchar_t* headers = L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
+        WinHttpSetTimeouts(request, 5000, 5000, 10000, file ? 60000 : 10000);
         DWORD size = sizeof(statusCode);
-        if (WinHttpSendRequest(request, headers, DWORD(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, nullptr) &&
+        if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) && WinHttpReceiveResponse(request, nullptr) &&
             WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &size,
                                 WINHTTP_NO_HEADER_INDEX))
         {
@@ -50,18 +62,24 @@ bool HttpGet(const std::string& path, DWORD& statusCode, std::string& body, std:
             for (;;)
             {
                 DWORD avail = 0;
-                if (!WinHttpQueryDataAvailable(request, &avail) || !avail || body.size() > (1u << 20))
+                if (!WinHttpQueryDataAvailable(request, &avail) || !avail || (!file && body.size() > (1u << 20)))
                     break;
                 std::vector<char> chunk(avail);
-                DWORD read = 0;
+                DWORD read = 0, written = 0;
                 if (!WinHttpReadData(request, chunk.data(), avail, &read) || !read)
                     break;
-                body.append(chunk.data(), read);
+                if (!file)
+                    body.append(chunk.data(), read);
+                else if (!WriteFile(file, chunk.data(), read, &written, nullptr) || written != read)
+                {
+                    ok = false;
+                    break;
+                }
             }
         }
     }
     if (!ok)
-        error = "no connection to GitHub (error " + std::to_string(GetLastError()) + ")";
+        error = "no connection to " + std::string(host, host + wcslen(host)) + " (error " + std::to_string(GetLastError()) + ")";
     if (request)
         WinHttpCloseHandle(request);
     if (connect)
@@ -69,6 +87,31 @@ bool HttpGet(const std::string& path, DWORD& statusCode, std::string& body, std:
     if (session)
         WinHttpCloseHandle(session);
     return ok;
+}
+
+std::string UrlEncode(const std::string& s)
+{
+    std::string out;
+    char buf[4];
+    for (unsigned char c : s)
+        if (isalnum(c) || c == '-' || c == '_' || c == '.')
+            out += char(c);
+        else
+        {
+            snprintf(buf, sizeof(buf), "%%%02X", c);
+            out += buf;
+        }
+    return out;
+}
+
+// direct_asset_url of the release link named SCDA_Setup.exe; empty if the release has none.
+std::string InstallerUrl(const std::string& json)
+{
+    const size_t name = json.find("\"name\":\"SCDA_Setup.exe\"");
+    if (name == std::string::npos)
+        return {};
+    const size_t end = json.find('}', name);
+    return JsonString(json.substr(name, end == std::string::npos ? std::string::npos : end - name), "direct_asset_url");
 }
 
 void Set(const Status& s)
@@ -82,17 +125,17 @@ void RunCheck()
     Status s;
     DWORD code = 0;
     std::string body, error;
-    if (!HttpGet("/repos/" + Repo() + "/releases/latest", code, body, error))
+    if (!HttpGet("https://gitlab.com/api/v4/projects/" + UrlEncode(Repo()) + "/releases/permalink/latest", code, body, error))
     {
         s.state = State::Failed;
         s.error = error;
     }
     else if (code == 404)
-        s.state = State::NoReleases; // releases/latest ignores drafts and prereleases
+        s.state = State::NoReleases;
     else if (code != 200)
     {
         s.state = State::Failed;
-        s.error = "GitHub answered " + std::to_string(code) + (code == 403 || code == 429 ? " (rate limit, try later)" : "");
+        s.error = "GitLab answered " + std::to_string(code) + (code == 403 || code == 429 ? " (rate limit, try later)" : "");
     }
     else
     {
@@ -100,6 +143,7 @@ void RunCheck()
         if (!s.latest.empty() && (s.latest[0] == 'v' || s.latest[0] == 'V'))
             s.latest.erase(0, 1);
         s.title = JsonString(body, "name");
+        s.installerUrl = InstallerUrl(body);
         if (s.latest.empty())
         {
             s.state = State::Failed;
@@ -114,7 +158,11 @@ void RunCheck()
 
 } // namespace
 
-const char* CurrentVersion() { return SCDA_VERSION; }
+const char* CurrentVersion()
+{
+    static const char* fake = getenv("SCDA_FAKE_VERSION"); // tests: pretend to be an older build
+    return fake ? fake : SCDA_VERSION;
+}
 
 const std::string& Repo()
 {
@@ -126,7 +174,7 @@ const std::string& Repo()
     return repo;
 }
 
-std::string ReleasePageUrl() { return "https://github.com/" + Repo() + "/releases/latest"; }
+std::string ReleasePageUrl() { return "https://gitlab.com/" + Repo() + "/-/releases/permalink/latest"; }
 
 Status Get()
 {
@@ -196,6 +244,49 @@ std::string JsonString(const std::string& json, const std::string& key)
             out += json[p];
     }
     return out;
+}
+
+bool InstallUpdate(std::string& error)
+{
+    const Status st = Get();
+    if (st.state != State::Available || st.installerUrl.empty())
+    {
+        error = "no downloadable update";
+        return false;
+    }
+    wchar_t temp[MAX_PATH], exe[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const std::wstring setup = std::wstring(temp) + L"SCDA_Setup_update.exe";
+    HANDLE file = CreateFileW(setup.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        error = "cannot write the installer to %TEMP%";
+        return false;
+    }
+    DWORD code = 0;
+    std::string body;
+    const bool got = HttpGet(st.installerUrl, code, body, error, file);
+    const DWORD bytes = GetFileSize(file, nullptr);
+    CloseHandle(file);
+    if (!got || code != 200 || bytes < (1u << 20))
+    {
+        if (got)
+            error = "download failed (HTTP " + std::to_string(code) + ")";
+        DeleteFileW(setup.c_str());
+        return false;
+    }
+    std::wstring dir = exe;
+    dir.resize(dir.find_last_of(L"\\/"));
+    // The installer waits for this process to exit, swaps scda.exe, then starts the game again.
+    const std::wstring args = L"--update --dir \"" + dir + L"\" --wait-pid " + std::to_wstring(GetCurrentProcessId()) + L" --relaunch";
+    RuntimeLog("[update] installing %s from %s\n", st.latest.c_str(), st.installerUrl.c_str());
+    if (intptr_t(ShellExecuteW(nullptr, L"open", setup.c_str(), args.c_str(), nullptr, SW_SHOWNORMAL)) <= 32)
+    {
+        error = "could not start the installer";
+        return false;
+    }
+    return true;
 }
 
 } // namespace updater

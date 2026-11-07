@@ -141,6 +141,8 @@ UpdateSettings LoadUpdateSettings(const std::filesystem::path& ini)
     {
         if (key == "checkonstart")
             s.checkOnStart = Truthy(value);
+        else if (key == "autoinstall")
+            s.autoInstall = Truthy(value);
         else if (key == "repo" && value.find('/') != std::string::npos)
             s.repo = value;
     });

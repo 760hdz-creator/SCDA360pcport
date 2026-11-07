@@ -953,17 +953,29 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
 
     // Headless: SCDA_Setup.exe --iso <image> --dir <folder> [--no-shortcut]
     //           SCDA_Setup.exe --update [--dir <folder>]   (default: the recorded/shortcut install)
+    //             [--wait-pid <pid>] first waits (60 s max) for that process (the game's in-game
+    //             updater) to exit; [--relaunch] starts scda.exe again after a successful update.
     int argc;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     std::wstring iso, dir;
-    bool shortcut = true, update = false;
+    bool shortcut = true, update = false, relaunch = false;
+    DWORD waitPid = 0;
     for (int i = 1; i < argc; i++)
     {
         if (!wcscmp(argv[i], L"--iso") && i + 1 < argc) iso = argv[++i];
         else if (!wcscmp(argv[i], L"--dir") && i + 1 < argc) dir = argv[++i];
         else if (!wcscmp(argv[i], L"--no-shortcut")) shortcut = false;
         else if (!wcscmp(argv[i], L"--update")) update = true;
+        else if (!wcscmp(argv[i], L"--wait-pid") && i + 1 < argc) waitPid = wcstoul(argv[++i], nullptr, 10);
+        else if (!wcscmp(argv[i], L"--relaunch")) relaunch = true;
     }
+    if (update && waitPid)
+        if (HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, waitPid))
+        {
+            WaitForSingleObject(p, 60000);
+            CloseHandle(p);
+            Sleep(500); // the exe image is released just after the process object signals
+        }
     if (update)
     {
         g_headless = true;
@@ -972,6 +984,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
         if (dir.empty()) dir = FindInstall();
         if (dir.empty()) { PostStatus(L"No installed game was found."); return 1; }
         Update(dir);
+        if (!g_ok && relaunch) // started from the game: nobody sees the console, so say why
+            MessageBoxW(nullptr, g_error.c_str(), L"SCDA Recomp update", MB_ICONWARNING);
+        if (g_ok && relaunch)
+            ShellExecuteW(nullptr, L"open", (dir + L"\scda.exe").c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL);
         return g_ok ? 0 : 1;
     }
     if (!iso.empty() && !dir.empty())

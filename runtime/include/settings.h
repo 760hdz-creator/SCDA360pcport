@@ -46,7 +46,8 @@ struct InputSettings
 
 struct UpdateSettings
 {
-    bool checkOnStart = true; // [Update] CheckOnStart: ask GitHub for the latest release at startup
+    bool checkOnStart = true; // [Update] CheckOnStart: ask GitLab for the latest release at startup
+    bool autoInstall = false; // [Update] AutoInstall: install a newer release found at startup (restarts the game)
     std::string repo;         // [Update] Repo=owner/name: overrides the build's repository (testing)
 };
 

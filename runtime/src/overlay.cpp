@@ -5,8 +5,10 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include <xinput.h>
+#include <settings.h>
 #include <imgui.h>
 #include <backends/imgui_impl_dx11.h>
 #include <backends/imgui_impl_win32.h>
@@ -213,6 +215,26 @@ void GraphicsTab(DisplaySettings& s)
     ImGui::Text("Internal %s  ->  Output %ux%u  (%s)", Resolution(scale).c_str(), w, h, how);
 }
 
+// Update install (F1 > Update, or [Update] AutoInstall=1): download in the background, then exit so
+// the installer (waiting on this process) can swap scda.exe and start the game again.
+std::atomic<bool> g_installing{ false };
+std::string g_installError;
+
+void StartInstall()
+{
+    if (g_installing.exchange(true))
+        return;
+    g_installError.clear();
+    std::thread([]
+    {
+        std::string error;
+        if (updater::InstallUpdate(error))
+            ExitProcess(0);
+        g_installError = error;
+        g_installing = false;
+    }).detach();
+}
+
 void UpdateTab()
 {
     const updater::Status st = updater::Get();
@@ -236,10 +258,23 @@ void UpdateTab()
         updater::Check();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button(st.state == S::Available ? "Download from the release page" : "Open the releases page"))
+    if (ImGui::Button("Open the releases page"))
         updater::OpenReleasePage();
+    if (st.state == S::Available && !st.installerUrl.empty())
+    {
+        ImGui::Spacing();
+        ImGui::BeginDisabled(g_installing.load());
+        if (ImGui::Button(g_installing ? "Downloading..." : "Install update now (restarts the game, unsaved progress is lost)"))
+            StartInstall();
+        ImGui::EndDisabled();
+    }
+    if (!g_installError.empty())
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "Install failed: %s", g_installError.c_str());
     ImGui::Spacing();
-    ImGui::TextDisabled("Releases: github.com/%s", updater::Repo().c_str());
+    bool autoInstall = LoadUpdateSettings(SettingsPath()).autoInstall;
+    if (ImGui::Checkbox("Install updates automatically at startup", &autoInstall))
+        SaveSetting(SettingsPath(), "Update", "AutoInstall", autoInstall ? "1" : "0");
+    ImGui::TextDisabled("Releases: gitlab.com/%s", updater::Repo().c_str());
 }
 
 void Menu()
@@ -484,6 +519,14 @@ void Draw()
     ImGui_ImplWin32_NewFrame();
     FeedImGuiGamepad(io);
     ImGui::NewFrame();
+    // [Update] AutoInstall=1: the startup check found a newer release with an installer.
+    static bool autoTried = false;
+    if (!autoTried && updater::Get().state == updater::State::Available)
+    {
+        autoTried = true;
+        if (LoadUpdateSettings(SettingsPath()).autoInstall && !updater::Get().installerUrl.empty())
+            StartInstall();
+    }
     if (open)
         Menu();
     else
