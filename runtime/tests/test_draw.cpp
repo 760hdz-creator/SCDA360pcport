@@ -1,7 +1,7 @@
 #include "check.h"
 #include <gpu/draw.h>
 
-static Pm4Payload Payload(const std::vector<uint32_t>& v)
+static std::function<uint32_t(uint32_t)> Payload(const std::vector<uint32_t>& v)
 {
     return [v](uint32_t i) { return i < v.size() ? v[i] : 0u; };
 }

@@ -83,6 +83,11 @@ FrameQueue& Frames();
 // unchanged value adds nothing; the first write of each constant in a frame is still logged, so a
 // frame's log alone also carries every constant it sets. SCDA_NO_REG_DEDUP=1 logs every write.
 static uint32_t g_constLogged[0x1000];
+// Read once at startup (the runtime never changes its environment): function-local statics cost a
+// guard check per call, and SetGpuRegister runs ~300k times per frame.
+// SCDA_TRACE_GAMMA=1: display-controller range writes (gamma ramp / PWL LUT), first 64 per register.
+static const bool g_traceGamma = getenv("SCDA_TRACE_GAMMA") != nullptr;
+static const bool g_noRegDedup = getenv("SCDA_NO_REG_DEDUP") != nullptr;
 static void SetGpuRegister(uint32_t index, uint32_t v)
 {
     index &= 0x7FFF;
@@ -90,20 +95,16 @@ static void SetGpuRegister(uint32_t index, uint32_t v)
         DisplayGammaRamp().SetIndex(v);
     else if (index == kRegDcLutColor)
         DisplayGammaRamp().Write(v);
-    // SCDA_TRACE_GAMMA=1: display-controller range writes (gamma ramp / PWL LUT), first 64 per register.
-    static const bool traceGamma = getenv("SCDA_TRACE_GAMMA") != nullptr;
-    if (traceGamma && index >= 0x1800 && index < 0x2000)
+    if (g_traceGamma && index >= 0x1800 && index < 0x2000)
     {
         static uint8_t counts[0x800];
         if ((index == 0x1922 || index == 0x1925 || counts[index - 0x1800] < 64) && ++counts[index - 0x1800] | 1)
             RuntimeLog("[gamma] reg %04X = %08X\n", index, v);
     }
     GuestStore32(kGpuRegBase + index * 4, v);
-    static const bool noDedup = getenv("SCDA_NO_REG_DEDUP") != nullptr;
-    if (const uint32_t c = index - kRegAluConstants; c < 0x1000 && !noDedup)
+    if (const uint32_t c = index - kRegAluConstants; c < 0x1000 && !g_noRegDedup)
     {
-        static const FrameQueue& frames = Frames();
-        const uint32_t frame = frames.HandOvers() + 1; // never 0, the array's initial value
+        const uint32_t frame = Frames().HandOvers() + 1; // never 0, the array's initial value
         if (g_shadow[index] == v && g_constLogged[c] == frame)
             return; // constants are not scratch or display registers: nothing else to do
         g_constLogged[c] = frame;
