@@ -18,6 +18,7 @@ struct Achievement
     std::string description; // achieved description
     std::string howTo;       // unachieved description, empty for secret ones
     int64_t unlockedAt = 0;  // unix time, 0 locked
+    bool multiplayer = false; // not reachable in SC4_Offline.xex (see AchievementsList)
 };
 
 // Parses the XDBF achievement table (XACH) with strings from string table `language`

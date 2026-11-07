@@ -48,6 +48,8 @@ How, in plain terms:
 
 **November 2026**
 
+- **Achievements (#6).** Unlocks pop up with their name and picture and are saved on your PC. F1 > Achievements
+  lists the 21 single-player ones.
 - **Much lighter on your CPU (#4).** Three of the game's background loops kept a processor core busy at all
   times, even with nothing to do. They now sleep while they wait. In Ellsworth Prison the game uses about a third
   of the CPU it used before, at the same 30 fps, and some levels load faster.

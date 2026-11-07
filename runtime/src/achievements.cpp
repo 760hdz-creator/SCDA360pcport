@@ -137,8 +137,7 @@ namespace {
 std::mutex g_mutex;
 bool g_loaded;
 std::vector<Achievement> g_table;
-const uint8_t* g_xdbf;
-size_t g_xdbfSize;
+std::vector<uint8_t> g_xdbf; // host copy: the image reloads on relaunch
 std::deque<Achievement> g_toasts;
 
 std::string StorePath() { return g_profileDir + "\\achievements.txt"; }
@@ -156,9 +155,14 @@ void LoadLocked()
         return; // retried on the next call
     }
     g_loaded = true;
-    g_xdbf = static_cast<const uint8_t*>(GuestPtr(at));
-    g_xdbfSize = size;
-    g_table = ParseXdbfAchievements(g_xdbf, g_xdbfSize, GameLanguage());
+    const uint8_t* guest = static_cast<const uint8_t*>(GuestPtr(at));
+    g_xdbf.assign(guest, guest + size);
+    g_table = ParseXdbfAchievements(g_xdbf.data(), g_xdbf.size(), GameLanguage());
+    // The offline title's achievement manager (*0x82C92B04, ids at +0x44) holds 21 slots: ids 6-23,
+    // 27, 29, 31 (SCDA_TRACE_ACH=1 logs them; 600 G). The rest (ranks, trophies, map experts) are
+    // multiplayer, which this port does not run.
+    for (Achievement& a : g_table)
+        a.multiplayer = !((a.id >= 6 && a.id <= 23) || a.id == 27 || a.id == 29 || a.id == 31);
     if (FILE* f = fopen(StorePath().c_str(), "r"))
     {
         unsigned id;
@@ -178,6 +182,18 @@ void AchievementsUnlock(uint32_t id)
 {
     std::lock_guard lock(g_mutex);
     LoadLocked();
+    // SCDA_TRACE_ACH=1: the title's achievement manager (*0x82C92B04) id table, 21 slots at +0x44
+    // (sub_821C6AB8 rejects index >= 21; -1 = unused).
+    static bool traced = false;
+    if (!traced && getenv("SCDA_TRACE_ACH"))
+        if (const uint32_t mgr = GuestLoad32(0x82C92B04))
+        {
+            traced = true;
+            std::string ids;
+            for (uint32_t i = 0; i < 21; i++)
+                ids += " " + std::to_string(int32_t(GuestLoad32(mgr + 0x44 + i * 4)));
+            RuntimeLog("[ach] manager 0x%08X ids%s\n", mgr, ids.c_str());
+        }
     auto it = std::find_if(g_table.begin(), g_table.end(), [&](const Achievement& a) { return a.id == id; });
     if (it == g_table.end())
     {
@@ -208,7 +224,7 @@ std::vector<uint8_t> AchievementImage(uint32_t imageId)
 {
     std::lock_guard lock(g_mutex);
     LoadLocked();
-    return g_xdbf ? XdbfImage(g_xdbf, g_xdbfSize, imageId) : std::vector<uint8_t>();
+    return XdbfImage(g_xdbf.data(), g_xdbf.size(), imageId);
 }
 
 bool AchievementsPopToast(Achievement& out)

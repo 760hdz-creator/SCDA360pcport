@@ -451,20 +451,31 @@ void AchievementsTab()
         ImGui::TextDisabled("No achievement data (the game has not started yet).");
         return;
     }
-    uint32_t got = 0, score = 0, total = 0;
+    // Multiplayer-only ones last (never reachable here).
+    std::stable_partition(list.begin(), list.end(), [](const Achievement& a) { return !a.multiplayer; });
+    uint32_t got = 0, count = 0, score = 0, total = 0;
     for (const Achievement& a : list)
     {
-        total += a.gamerscore;
+        if (a.multiplayer)
+            continue;
+        count++, total += a.gamerscore;
         if (a.unlockedAt)
             got++, score += a.gamerscore;
     }
-    ImGui::Text("%u / %zu unlocked, %u / %u G", got, list.size(), score, total);
+    ImGui::Text("%u / %u unlocked, %u / %u G", got, count, score, total);
     ImGui::TextDisabled("Kept on this PC only.");
     const float em = ImGui::GetFontSize();
     if (ImGui::BeginChild("achievements", ImVec2(0.0f, -ImGui::GetTextLineHeightWithSpacing() * 2.5f), ImGuiChildFlags_NavFlattened))
     {
+        bool mpHeader = false;
         for (const Achievement& a : list)
         {
+            if (a.multiplayer && !mpHeader)
+            {
+                mpHeader = true;
+                ImGui::Separator();
+                ImGui::TextDisabled("Multiplayer (not in this port)");
+            }
             ImGui::PushID(a.id);
             const ImVec4 tint = a.unlockedAt ? ImVec4(1, 1, 1, 1) : ImVec4(0.35f, 0.35f, 0.35f, 1);
             if (ImTextureID icon = Icon(a.imageId))
