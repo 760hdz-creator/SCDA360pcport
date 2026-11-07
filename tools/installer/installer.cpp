@@ -987,7 +987,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
         if (!g_ok && relaunch) // started from the game: nobody sees the console, so say why
             MessageBoxW(nullptr, g_error.c_str(), L"SCDA Recomp update", MB_ICONWARNING);
         if (g_ok && relaunch)
-            ShellExecuteW(nullptr, L"open", (dir + L"\scda.exe").c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL);
+            ShellExecuteW(nullptr, L"open", (dir + L"\\scda.exe").c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL);
         return g_ok ? 0 : 1;
     }
     if (!iso.empty() && !dir.empty())

@@ -146,7 +146,7 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 
 **Known issues**
 
-- Most maps hold the game's 30 fps limit. New York's busiest areas can drop to about 25 fps.
+- Most maps hold the game's 30 fps limit. New York's busiest areas run at about 29.5 fps with occasional stutter (Scale 3, RTX 4080 SUPER).
 - No ultrawide support yet. 21:9 and 32:9 are planned.
 - Above `Scale=1`, a post-processing effect can miss the very last row or column of pixels, and a faint line can
   show up about a third of the way down the screen.
