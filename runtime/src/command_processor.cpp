@@ -10,6 +10,7 @@
 #include <thread>
 #include <algorithm>
 #include <unordered_map>
+#include <gpu_wake.h>
 #include <vector>
 #include <command_processor.h>
 #include <gpu/draw_state.h>
@@ -124,7 +125,11 @@ FrameQueue& Frames()
     return queue;
 }
 
-static void BumpEpoch() { Frames().SetEpoch(++g_epoch); }
+static void BumpEpoch()
+{
+    Frames().SetEpoch(++g_epoch);
+    GpuProgressSignal(); // guest-visible GPU progress: wake D3D spin-waiters (gpu_wake.h)
+}
 
 // IM_LOAD shaders by guest address: unchanged since the last load in the same epoch (the CPU
 // cannot have rewritten ucode the GPU may still read), else compared against the last bytes.

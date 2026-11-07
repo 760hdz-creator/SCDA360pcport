@@ -9,6 +9,7 @@
 #include <thread_context.h>
 #include <title.h>
 #include <watchdog.h>
+#include <gpu_wake.h>
 
 
 constexpr uint32_t kInterruptThreadId = 0x100;
@@ -53,6 +54,7 @@ static bool Vsync(PPCContext& ctx)
     GuestStore32(kSwapPendingReg, GuestLoad32(kSwapPendingReg) | 1u);
     Deliver(ctx, kVblankSource, 0);
     GuestStore32(kSwapPendingReg, GuestLoad32(kSwapPendingReg) & ~1u);
+    GpuProgressSignal();
     return swap;
 }
 

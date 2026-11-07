@@ -299,9 +299,9 @@ static void RenderThread(DisplaySettings s)
         // SCDA_TRACE_PRESENT=1: one line per present (frame, draws, frontbuffer address, fallback).
         static const bool tracePresent = getenv("SCDA_TRACE_PRESENT") != nullptr;
         if (tracePresent)
-            RuntimeLog("[present] %llu draws %u drawn %u skipped %u resolves %u fb %08X %s\n", (unsigned long long)frame.stats.frame, frame.stats.draws,
+            RuntimeLog("[present] %llu draws %u drawn %u skipped %u resolves %u fb %08X %s t %.3f\n", (unsigned long long)frame.stats.frame, frame.stats.draws,
                 renderer.LastDrawn(), renderer.LastSkipped(), frame.stats.resolves, frame.frontbuffer,
-                renderer.LastPresentedFrontbuffer() ? "frontbuffer" : "target");
+                renderer.LastPresentedFrontbuffer() ? "frontbuffer" : "target", (GetTickCount64() - startTick) / 1000.0);
         if (dumping || tracing)
         {
             const double busyMs = 1000.0 * double(busyTicks) / double(qpf.QuadPart);

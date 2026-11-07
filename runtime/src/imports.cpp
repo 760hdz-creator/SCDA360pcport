@@ -119,6 +119,13 @@ SCDA_IMPORT(RtlLeaveCriticalSection)
     auto owner = CsOwner(cs);
     owner.store(0);
     owner.notify_one();
+    // The movie/loading-screen thread loop (sub_821BF770) polls its player under this lock with no
+    // wait at all while no loading screen is up, i.e. all through gameplay: one host core at ~90%
+    // (issue #4). Its idle-path leave returns to 0x821BF92C; sleep there, outside the lock.
+    // SCDA_NO_MOVIE_IDLE_SLEEP=1 = old busy loop.
+    static const bool movieSpin = getenv("SCDA_NO_MOVIE_IDLE_SLEEP") != nullptr;
+    if (uint32_t(ctx.lr) == 0x821BF92C && !movieSpin)
+        TitleSleep(1);
 }
 
 // ---- Process / privilege ----

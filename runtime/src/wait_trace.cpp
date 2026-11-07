@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <runtime.h>
+#include <gpu_wake.h>
 
 // Guest GPU waits (callers of the D3D spin-wait sub_821FA428), for SCDA_TIMELINE: one 'A' event at
 // return for waits over 100 us; a = function address, b = duration us.
@@ -25,3 +26,30 @@ PPC_FUNC(sub_821F33A8) { TimedWait(__imp__sub_821F33A8, 0x821F33A8, ctx, base); 
 PPC_FUNC(sub_821F3440) { TimedWait(__imp__sub_821F3440, 0x821F3440, ctx, base); }
 PPC_FUNC(sub_821F4088) { TimedWait(__imp__sub_821F4088, 0x821F4088, ctx, base); }
 PPC_FUNC(sub_8220A638) { TimedWait(__imp__sub_8220A638, 0x8220A638, ctx, base); }
+
+// sub_821FA428 is one iteration of D3D's GPU spin-wait (8x db16cyc, then a 5 s hang check; r3 = 1
+// keep waiting, 0 = hung). The recompiled spin pins a host core (issue #4: ~60% of the main thread),
+// so after a short spin the thread sleeps until the GPU makes progress (gpu_wake.h) or 1 ms passes.
+// SCDA_NO_GPU_WAIT_SLEEP=1 = old pure spin.
+extern "C" PPC_FUNC(__imp__sub_821FA428);
+PPC_FUNC(sub_821FA428)
+{
+    static const bool spinOnly = getenv("SCDA_NO_GPU_WAIT_SLEEP") != nullptr;
+    thread_local uint32_t spins;
+    thread_local LONGLONG lastCall;
+    const uint32_t seen = GpuProgressValue();
+    __imp__sub_821FA428(ctx, base);
+    if (spinOnly || ctx.r3.u32 == 0)
+        return;
+    static const LONGLONG newWaitGap = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f.QuadPart / 10000; }();
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (now.QuadPart - lastCall > newWaitGap) // > 100 us since this thread's last iteration: a new wait
+        spins = 0;
+    if (++spins > 32)
+        GpuProgressWait(seen, 1);
+    else
+        YieldProcessor();
+    QueryPerformanceCounter(&now);
+    lastCall = now.QuadPart;
+}

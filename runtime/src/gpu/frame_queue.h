@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <gpu_wake.h>
 #include <gpu/draw.h>
 #include <runtime.h>
 
@@ -50,6 +51,7 @@ inline bool WriteOcclusionResult(uint32_t address, uint32_t generation, uint32_t
     GuestStore32(address + 20, 0);  // ZPass_B
     std::atomic_thread_fence(std::memory_order_release);
     GuestStore32(address + 16, le); // ZPass_A
+    GpuProgressSignal();
     return true;
 }
 

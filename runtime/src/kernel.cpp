@@ -138,7 +138,12 @@ static void TraceSync(const char* what, PPCContext& ctx, uint32_t handle)
         return;
     last = key;
     uint32_t teb = GuestLoad32(ctx.r13.u32 + 0x100);
-    RuntimeLog("[sync] T%u %s 0x%08X lr 0x%08X\n", teb ? GuestLoad32(teb + 0x14C) : 0, what, handle, uint32_t(ctx.lr));
+    RuntimeLog("[sync] T%u h%lu %s 0x%08X lr 0x%08X", teb ? GuestLoad32(teb + 0x14C) : 0, GetCurrentThreadId(), what, handle, uint32_t(ctx.lr));
+    // SCDA_TRACE_SYNC=2: also the guest back chain (saved lr at caller sp - 8).
+    if (getenv("SCDA_TRACE_SYNC")[0] == '2')
+        for (uint32_t sp = GuestLoad32(ctx.r1.u32), i = 0; sp && i < 6; sp = GuestLoad32(sp), i++)
+            RuntimeLog(" <- 0x%08X", GuestLoad32(sp - 8));
+    RuntimeLog("\n");
 }
 
 // ---- Threads ----
@@ -376,7 +381,11 @@ SCDA_IMPORT(NtWaitForMultipleObjectsEx)
     uint32_t count = ctx.r3.u32;
     HANDLE hs[64];
     for (uint32_t i = 0; i < count && i < 64; i++)
+    {
+        TraceSync(ctx.r5.u32 == 0 ? "wait-all" : "wait-any", ctx, GuestLoad32(ctx.r4.u32 + i * 4));
         hs[i] = HostHandle(GuestLoad32(ctx.r4.u32 + i * 4));
+    }
+    TraceSync("  timeout-ms", ctx, TimeoutMs(ctx.r8.u32));
     ctx.r3.u64 = WaitResult(TitleWait(count, hs, ctx.r5.u32 == 0, TimeoutMs(ctx.r8.u32), ctx.r7.u32 != 0));
 }
 
