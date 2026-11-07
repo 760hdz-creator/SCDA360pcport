@@ -1201,6 +1201,17 @@ static void MarkEdramWrites(const RegisterFile& regs)
         return;
     const SurfaceLayout l = EdramSurfaceLayout(regs[kRegRbSurfaceInfo]);
     const uint32_t tileRows = (std::min(uint32_t(rowsF + 0.999f), 2048u) * l.samplesY + 15) / 16;
+    // Collect this draw's marks (up to 4 colour + depth) first: a draw whose marks equal the previous
+    // marking draw's leaves the tables as they are (same writes, same order), so it skips the loops
+    // (newyork_02: ~9000 draws x ~1000 tiles per frame, 7.5% of the renderer). SCDA_NO_EDRAM_MARK_SKIP=1: always mark.
+    struct Mark
+    {
+        uint32_t base, n;
+        uint8_t format;
+        bool operator==(const Mark&) const = default;
+    };
+    Mark marks[5];
+    uint32_t count = 0;
     auto mark = [&](uint32_t base, bool wide, uint8_t format)
     {
         const uint32_t n = std::min((l.samplePitch * (wide ? 2 : 1) + 79) / 80 * tileRows, 2048u);
@@ -1210,11 +1221,7 @@ static void MarkEdramWrites(const RegisterFile& regs)
             seen.insert(uint64_t(base) << 48 ^ uint64_t(regs[kRegRbSurfaceInfo]) << 16 ^ uint64_t(n) ^ uint64_t(wide) << 40).second)
             RuntimeLog("[zalias] tiles %03X+%u over 0x1C0: surf %08X color %08X depth %08X rows %g vte %08X\n", base, n,
                 regs[kRegRbSurfaceInfo], regs[kRegRbColorInfo], regs[kRegRbDepthInfo], double(rowsF), vte);
-        for (uint32_t t = 0; t < n; t++)
-        {
-            g_tileOwner[(base + t) & 2047] = uint16_t(base + 1);
-            g_tileFormat[(base + t) & 2047] = format;
-        }
+        marks[count++] = { base, n, format };
     };
     static constexpr uint32_t kInfo[4] = { kRegRbColorInfo, kRegRbColor1Info, kRegRbColor2Info, kRegRbColor3Info };
     if ((regs[kRegRbModeControl] & 7) == 4)
@@ -1226,6 +1233,19 @@ static void MarkEdramWrites(const RegisterFile& regs)
             }
     if ((regs[0x2200] & 6) == 6) // depth test + write
         mark(regs[kRegRbDepthInfo] & 0xFFF, false, 16);
+    static Mark last[5];
+    static uint32_t lastCount;
+    static const bool noSkip = getenv("SCDA_NO_EDRAM_MARK_SKIP") != nullptr;
+    if (!noSkip && count == lastCount && std::equal(marks, marks + count, last))
+        return;
+    std::copy(marks, marks + count, last);
+    lastCount = count;
+    for (uint32_t m = 0; m < count; m++)
+        for (uint32_t t = 0; t < marks[m].n; t++)
+        {
+            g_tileOwner[(marks[m].base + t) & 2047] = uint16_t(marks[m].base + 1);
+            g_tileFormat[(marks[m].base + t) & 2047] = marks[m].format;
+        }
 }
 
 // Whether another surface left non-8_8_8_8 data (a float shadow map, depth) in the first 16 tile rows
