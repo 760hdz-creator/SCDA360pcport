@@ -86,7 +86,7 @@ yet.
 ## #6 Achievements. Done in v0.1.11
 The game still sends its Xbox 360 achievement unlocks, and the port now catches them. Each unlock shows a popup
 with the achievement's name, gamerscore and picture (all read from the disc) and is saved on your PC
-(`%LOCALAPPDATA%\SCDARecomp\profilechievements.txt`). F1 / L3+R3 > Achievements lists all 38. Nothing is sent
+(`%LOCALAPPDATA%\SCDARecomp\profile\achievements.txt`). F1 / L3+R3 > Achievements lists all 38. Nothing is sent
 to Xbox Live.
 
 ## #8 Discord status toggle. Close (not applicable)
