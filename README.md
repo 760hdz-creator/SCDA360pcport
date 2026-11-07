@@ -48,6 +48,15 @@ How, in plain terms:
 
 **November 2026**
 
+- **Much lighter on your CPU (#4).** Three of the game's background loops kept a processor core busy at all
+  times, even with nothing to do. They now sleep while they wait. In Ellsworth Prison the game uses about a third
+  of the CPU it used before, at the same 30 fps, and some levels load faster.
+- **In-game updates (#7).** F1 > Update can download and install a new version for you and restart the game, or
+  do it automatically at startup.
+- **Brightness and gamma (#21), FPS overlay (#23) and monitor choice (#12)** in F1 > Display.
+- **Rebind the keyboard and mouse (#1)** in `settings.ini` (`[Keys]`), plus a **walk key** (Shift) for slow,
+  quiet movement on the keyboard.
+- **Controller options (#13):** turn the controller off, or change how fast it turns the camera.
 - **JBA headquarters looks right.** Big dark triangles no longer cover the walls and floors, and you can't see
   through the walls anymore. Some level geometry was being built from the wrong points.
 - **The Iceland shack is solid.** Its roof and walls had holes from the inside. It was the same bug as the JBA HQ
@@ -181,11 +190,12 @@ Roughly in this order:
 **Extra Settings menu.** Open it from the game's own **OPTIONS > EXTRA SETTINGS** (it replaces TV calibration;
 brightness and contrast stay on the OPTIONS page), or any time with **F1** or **L3+R3**. It has three tabs:
 
-- **Display:** window mode, VSync, resolution scale, texture sharpness (anisotropic filtering), field of view, light
-  distance and clean goggles.
+- **Display:** window mode, monitor, brightness, gamma, performance overlay, VSync, resolution scale, texture
+  sharpness (anisotropic filtering), field of view, language and clean goggles.
 - **Graphics:** quality presets (Low to Ultra), extra smoothing (FXAA, on top of the game's own 4x anti-aliasing),
   sharpening, and upscaling (renders at a lower resolution and scales it up, for slower PCs).
-- **Update:** your version and the newest released version. After you sign in at the main menu, a small message in
+- **Update:** your version and the newest released version, a button that installs the update and restarts the
+  game, and an option to do that automatically at startup. After you sign in at the main menu, a small message in
   the top right tells you if there's an update.
 
 Changes apply right away and are saved. Close the menu with Esc, F1, Start or L3+R3.
@@ -203,10 +213,24 @@ AntiAliasing=Off
 Sharpening=0
 Upscaling=Off
 FOV=75
+Brightness=1.0
+Gamma=1.0
+PerformanceOverlay=Off
+Monitor=0
 [Input]
 MouseLook=1
 MouseSensitivity=1.0
 MouseInvertY=0
+Gamepad=1
+GamepadSensitivity=1.0
+WalkSpeed=0.5
+ButtonPrompts=Auto
+[Keys]
+A=Enter,Space
+Walk=Shift
+[Update]
+CheckOnStart=1
+AutoInstall=0
 ```
 
 - `Scale` (1-4): the game renders at 1280x720 times this number, then shrinks it to your window. 2 = 2560x1440.
@@ -214,6 +238,16 @@ MouseInvertY=0
 - `Mode`: `windowed`, `borderless` or `fullscreen`.
 - `CleanGoggles=1`: no scanlines or noise in the goggle views.
 - `FOV` (60-110): field of view.
+- `Brightness`, `Gamma` (0.5-2.0, 1.0 = as on the console): `Gamma` above 1 makes dark areas easier to see.
+- `PerformanceOverlay`: `Off`, `FPS` or `Detailed` (frame time, CPU use, resolution).
+- `Monitor`: 0 = main display, 1, 2, ... = the others. Applies at the next start.
+- `Gamepad=0` ignores controllers. `GamepadSensitivity` (0.25-3) scales the controller's camera stick.
+- `ButtonPrompts`: `Auto`, `Xbox`, `PlayStation` or `Keyboard` button icons.
+- `[Keys]`: `Action=Key` or `Action=Key1,Key2` (`None` unbinds). Actions: `A B X Y Start Back Up Down Left Right
+  LB RB LS RS LT RT MoveForward MoveBack MoveLeft MoveRight LookUp LookDown LookLeft LookRight Walk`. Keys: letters,
+  digits, `F2`-`F12`, `Space Enter Escape Tab Backspace Shift Ctrl Alt CapsLock Up Down Left Right Insert Delete
+  Home End PageUp PageDown Numpad0`-`Numpad9 Mouse1`-`Mouse5`. On-screen key icons still show the default keys.
+- `WalkSpeed` (0.1-1): how far the movement keys push the stick while `Walk` is held.
 - Don't put comments on the same line as a setting.
 
 <img src="installer.png" width="640" alt="Installer">
