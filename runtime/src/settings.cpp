@@ -38,6 +38,13 @@ static void ForEachSetting(const std::filesystem::path& ini, const char* wanted,
 
 static bool Truthy(const std::string& value) { return value != "0" && value != "false"; }
 
+std::vector<std::pair<std::string, std::string>> LoadSettingsSection(const std::filesystem::path& ini, const std::string& section)
+{
+    std::vector<std::pair<std::string, std::string>> out;
+    ForEachSetting(ini, Lower(section).c_str(), [&](const std::string& key, const std::string& value) { out.emplace_back(key, value); });
+    return out;
+}
+
 InputSettings LoadInputSettings(const std::filesystem::path& ini)
 {
     InputSettings s;
@@ -51,6 +58,16 @@ InputSettings LoadInputSettings(const std::filesystem::path& ini)
             s.sdlGamepads = Truthy(value);
         else if (key == "buttonprompts")
             s.buttonPrompts = value;
+        else if (key == "gamepad")
+            s.gamepad = Truthy(value);
+        else if (key == "gamepadsensitivity" || key == "walkspeed")
+        {
+            const float v = float(atof(value.c_str()));
+            if (key == "walkspeed" && v >= 0.1f && v <= 1.0f)
+                s.walkSpeed = v;
+            else if (key == "gamepadsensitivity" && v >= 0.25f && v <= 3.0f)
+                s.gamepadSensitivity = v;
+        }
         else if (key == "mousesensitivity")
         {
             float v = float(atof(value.c_str()));

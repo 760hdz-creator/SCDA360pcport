@@ -3,6 +3,7 @@
 #include <cstring>
 #include <filesystem>
 #include <input.h>
+#include <keybinds.h>
 #include <pad.h>
 #ifdef SCDA_HAVE_SDL3
 #include <SDL3/SDL_gamepad.h>
@@ -290,3 +291,22 @@ TEST(pad_from_sdl_maps_playstation_layout)
     CHECK_EQ(PadFromSdl(b, a).wButtons, uint16_t(XINPUT_GAMEPAD_B | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_BACK));
 }
 #endif
+
+// [Keys] rebinding (keybinds.h): a rebound action, an unbound one, multi-key, and Walk scaling.
+TEST(key_bindings_rebind_and_walk)
+{
+    KeyBindings b = ParseKeyBindings({ { "a", "g" }, { "b", "none" }, { "moveforward", "up, numpad8" }, { "x", "bogus" } }, 0.25f);
+    CHECK(b.keys[int(KeyAction::A)] == std::vector<int>{ 'G' });
+    CHECK(b.keys[int(KeyAction::B)].empty());
+    CHECK(b.keys[int(KeyAction::MoveForward)] == (std::vector<int>{ VK_UP, VK_NUMPAD8 }));
+    CHECK(b.keys[int(KeyAction::X)] == std::vector<int>{ 'E' }); // unknown name keeps the default
+    CHECK_EQ(KeyCodeFromName("f1"), 0);                          // the menu key
+    SetKeyBindings(b);
+    static int held[3];
+    held[0] = 'G'; held[1] = VK_NUMPAD8; held[2] = VK_SHIFT;
+    auto down = [](int vk) { for (int k : held) if (k && k == vk) return true; return false; };
+    XINPUT_GAMEPAD g = KeyboardGamepad(down);
+    SetKeyBindings(DefaultKeyBindings());
+    CHECK_EQ(g.wButtons, uint16_t(XINPUT_GAMEPAD_A));
+    CHECK_EQ(g.sThumbLY, int16_t(8191));
+}

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
+#include <vector>
 
 struct DisplaySettings
 {
@@ -48,6 +50,9 @@ struct InputSettings
     bool mouseInvertY = false;
     bool sdlGamepads = true;       // [Input] PlayStationNative: SDL3 gamepads (PlayStation, Switch) when no XInput pad
     std::string buttonPrompts = "Auto"; // [Input] ButtonPrompts: Auto|Xbox|PlayStation|Keyboard (prompts.h)
+    bool gamepad = true;              // [Input] Gamepad=0: ignore controllers (keyboard and mouse only)
+    float gamepadSensitivity = 1.0f;  // [Input] GamepadSensitivity=0.25..3: right stick (camera) scale
+    float walkSpeed = 0.5f;           // [Input] WalkSpeed=0.1..1: left stick deflection while [Keys] Walk is held
 };
 
 struct UpdateSettings
@@ -69,3 +74,5 @@ const char* GameLanguageName(uint32_t id); // "English" .. ; nullptr if not one 
 // section). Other lines are kept as they are. Written to a temporary file, then renamed over.
 bool SaveSetting(const std::filesystem::path& ini, const std::string& section, const std::string& key, const std::string& value);
 std::filesystem::path SettingsPath();
+// Every key=value line of [section] (both lowercased), in file order (e.g. [Keys], keybinds.h).
+std::vector<std::pair<std::string, std::string>> LoadSettingsSection(const std::filesystem::path& ini, const std::string& section);

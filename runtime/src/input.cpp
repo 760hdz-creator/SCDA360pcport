@@ -11,6 +11,7 @@
 #include <string>
 #include <gpu/frame_queue.h>
 #include <input.h>
+#include <keybinds.h>
 #include <pad.h>
 #include <prompts.h>
 #include <runtime.h>
@@ -33,25 +34,35 @@ void StoreInputState(uint32_t addr, uint32_t packet, const XINPUT_GAMEPAD& g)
 
 XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
 {
-    static const struct { int vk; uint16_t button; } kButtons[] = {
-        { VK_RETURN, XINPUT_GAMEPAD_A }, { VK_SPACE, XINPUT_GAMEPAD_A }, { VK_BACK, XINPUT_GAMEPAD_B }, { VK_CONTROL, XINPUT_GAMEPAD_B },
-        { 'E', XINPUT_GAMEPAD_X }, { 'Q', XINPUT_GAMEPAD_Y },
-        { VK_ESCAPE, XINPUT_GAMEPAD_START }, { VK_TAB, XINPUT_GAMEPAD_BACK }, { VK_UP, XINPUT_GAMEPAD_DPAD_UP },
-        { VK_DOWN, XINPUT_GAMEPAD_DPAD_DOWN }, { VK_LEFT, XINPUT_GAMEPAD_DPAD_LEFT }, { VK_RIGHT, XINPUT_GAMEPAD_DPAD_RIGHT },
-        { '1', XINPUT_GAMEPAD_LEFT_SHOULDER }, { '3', XINPUT_GAMEPAD_RIGHT_SHOULDER },
-        { 'F', XINPUT_GAMEPAD_LEFT_THUMB }, { 'R', XINPUT_GAMEPAD_RIGHT_THUMB }, { VK_MBUTTON, XINPUT_GAMEPAD_RIGHT_THUMB },
+    const KeyBindings& kb = CurrentKeyBindings();
+    auto held = [&](KeyAction a)
+    {
+        for (int vk : kb.keys[int(a)])
+            if (down(vk))
+                return true;
+        return false;
+    };
+    static const struct { KeyAction action; uint16_t button; } kButtons[] = {
+        { KeyAction::A, XINPUT_GAMEPAD_A }, { KeyAction::B, XINPUT_GAMEPAD_B }, { KeyAction::X, XINPUT_GAMEPAD_X },
+        { KeyAction::Y, XINPUT_GAMEPAD_Y }, { KeyAction::Start, XINPUT_GAMEPAD_START }, { KeyAction::Back, XINPUT_GAMEPAD_BACK },
+        { KeyAction::Up, XINPUT_GAMEPAD_DPAD_UP }, { KeyAction::Down, XINPUT_GAMEPAD_DPAD_DOWN },
+        { KeyAction::Left, XINPUT_GAMEPAD_DPAD_LEFT }, { KeyAction::Right, XINPUT_GAMEPAD_DPAD_RIGHT },
+        { KeyAction::LB, XINPUT_GAMEPAD_LEFT_SHOULDER }, { KeyAction::RB, XINPUT_GAMEPAD_RIGHT_SHOULDER },
+        { KeyAction::LS, XINPUT_GAMEPAD_LEFT_THUMB }, { KeyAction::RS, XINPUT_GAMEPAD_RIGHT_THUMB },
     };
     XINPUT_GAMEPAD g{};
     for (auto& b : kButtons)
-        if (down(b.vk))
+        if (held(b.action))
             g.wButtons |= b.button;
-    auto axis = [&](int neg, int pos) { return int16_t((down(pos) ? 32767 : 0) - (down(neg) ? 32767 : 0)); };
-    g.sThumbLX = axis('A', 'D');
-    g.sThumbLY = axis('S', 'W');
-    g.sThumbRX = axis('J', 'L');
-    g.sThumbRY = axis('K', 'I');
-    g.bLeftTrigger = down('Z') || down(VK_RBUTTON) ? 255 : 0;
-    g.bRightTrigger = down('C') || down(VK_LBUTTON) ? 255 : 0;
+    // Walk (held): the movement keys deflect the left stick only to WalkSpeed (Sam's speed follows the stick).
+    const int16_t full = held(KeyAction::Walk) ? int16_t(32767.0f * kb.walkSpeed) : int16_t(32767);
+    auto axis = [&](KeyAction neg, KeyAction pos, int16_t max) { return int16_t((held(pos) ? max : 0) - (held(neg) ? max : 0)); };
+    g.sThumbLX = axis(KeyAction::MoveLeft, KeyAction::MoveRight, full);
+    g.sThumbLY = axis(KeyAction::MoveBack, KeyAction::MoveForward, full);
+    g.sThumbRX = axis(KeyAction::LookLeft, KeyAction::LookRight, 32767);
+    g.sThumbRY = axis(KeyAction::LookDown, KeyAction::LookUp, 32767);
+    g.bLeftTrigger = held(KeyAction::LT) ? 255 : 0;
+    g.bRightTrigger = held(KeyAction::RT) ? 255 : 0;
     return g;
 }
 
@@ -223,11 +234,23 @@ SCDA_IMPORT(XamInputGetState)
         }
         return ParseAutoPress(env);
     }();
-    static const InputSettings mouse = LoadInputSettings(SettingsPath());
+    static const InputSettings mouse = []
+    {
+        const auto path = SettingsPath();
+        InputSettings s = LoadInputSettings(path);
+        SetKeyBindings(ParseKeyBindings(LoadSettingsSection(path, "keys"), s.walkSpeed));
+        return s;
+    }();
     XINPUT_GAMEPAD g{};
     PadKind kind = PadKind::None;
-    // A scripted run ignores the physical pad as well, so A/B runs stay identical.
-    bool connected = script.empty() && PadGetState(g, &kind);
+    // A scripted run ignores the physical pad as well, so A/B runs stay identical. [Input] Gamepad=0 ignores it always.
+    bool connected = script.empty() && mouse.gamepad && PadGetState(g, &kind);
+    if (connected && mouse.gamepadSensitivity != 1.0f) // [Input] GamepadSensitivity: right stick (camera) scale
+    {
+        auto scale = [&](SHORT v) { return SHORT(std::clamp(float(v) * mouse.gamepadSensitivity, -32767.0f, 32767.0f)); };
+        g.sThumbRX = scale(g.sThumbRX);
+        g.sThumbRY = scale(g.sThumbRY);
+    }
     const bool padActive = connected && (g.wButtons || g.bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD ||
         g.bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD || !StickIdle(g.sThumbLX, g.sThumbLY, XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) ||
         !StickIdle(g.sThumbRX, g.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE));
