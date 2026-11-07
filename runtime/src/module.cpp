@@ -1,5 +1,6 @@
 #include <module.h>
 #include <runtime.h>
+#include <cstring>
 
 uint32_t g_xexHeader;
 
@@ -40,6 +41,25 @@ static uint32_t XexHeaderField(uint32_t header, uint32_t key)
 }
 
 SCDA_IMPORT(RtlImageXexHeaderField) { ctx.r3.u64 = XexHeaderField(ctx.r3.u32, ctx.r4.u32); }
+
+// Resource info (key 0x2FF): {u32 size, {char name[8], u32 address, u32 size}...}.
+uint32_t XexResource(const char* name, uint32_t* size)
+{
+    const uint32_t info = XexHeaderField(g_xexHeader, 0x000002FF);
+    if (!info)
+        return 0;
+    const uint32_t count = (GuestLoad32(info) - 4) / 16;
+    for (uint32_t i = 0; i < count && i < 64; i++)
+    {
+        const uint32_t at = info + 4 + i * 16;
+        if (strncmp((const char*)GuestPtr(at), name, 8) != 0)
+            continue;
+        if (size)
+            *size = GuestLoad32(at + 12);
+        return GuestLoad32(at + 8);
+    }
+    return 0;
+}
 
 // XamGetExecutionId(XEX_EXECUTION_ID** Out): the execution info optional header (key 0x00040006).
 SCDA_IMPORT(XamGetExecutionId)

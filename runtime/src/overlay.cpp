@@ -19,6 +19,8 @@
 #include <prompts.h>
 #include <fov.h>
 #include <runtime.h>
+#include <achievements.h>
+#include <map>
 #include "overlay.h"
 #include "updater.h"
 
@@ -43,8 +45,8 @@ HWND g_hwnd;
 DisplaySettings g_settings; // as shown in the menu and saved to settings.ini
 ID3D11Device* g_device;      // the ImGui DX11 backend's (a lost device makes a new one)
 bool g_imgui;
-int g_openTab = -1; // SCDA_MENU=<0-2>: the menu starts open on that tab (unattended checks)
-constexpr int kTabs = 3;
+int g_openTab = -1; // SCDA_MENU=<0-3>: the menu starts open on that tab (unattended checks)
+constexpr int kTabs = 4;
 int g_tabStep = 0;  // L1/R1 (LB/RB) pressed in the menu: -1 previous tab, +1 next
 
 // Update notification: shown once, when the check has answered and the player has signed in at the
@@ -357,6 +359,136 @@ void UpdateTab()
     ImGui::TextDisabled("Checks gitlab.com/%s and github.com/%s", updater::Repo().c_str(), updater::GitHubRepo().c_str());
 }
 
+// Achievement icons (XDBF PNGs) as ImGui textures, per device (a new device drops them).
+std::map<uint32_t, ID3D11ShaderResourceView*> g_icons;
+
+void DropIcons()
+{
+    for (auto& [id, srv] : g_icons)
+        if (srv)
+            srv->Release();
+    g_icons.clear();
+}
+
+ImTextureID Icon(uint32_t imageId)
+{
+    auto [it, added] = g_icons.try_emplace(imageId, nullptr);
+    if (added && g_device)
+    {
+        uint32_t w = 0, h = 0;
+        const std::vector<uint32_t> rgba = DecodePngRgba(AchievementImage(imageId), w, h);
+        if (!rgba.empty())
+        {
+            D3D11_TEXTURE2D_DESC desc{};
+            desc.Width = w, desc.Height = h, desc.MipLevels = 1, desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            desc.Usage = D3D11_USAGE_IMMUTABLE;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA init{ rgba.data(), w * 4, 0 };
+            ID3D11Texture2D* tex = nullptr;
+            if (SUCCEEDED(g_device->CreateTexture2D(&desc, &init, &tex)))
+            {
+                g_device->CreateShaderResourceView(tex, nullptr, &it->second);
+                tex->Release();
+            }
+        }
+    }
+    return (ImTextureID)it->second;
+}
+
+// Unlock toast: top centre (the game draws its prompts along the bottom), one at a time, kAchievementSeconds each.
+constexpr double kAchievementSeconds = 6.0;
+Achievement g_achToast;
+bool g_achShowing;
+std::chrono::steady_clock::time_point g_achSince;
+
+bool AchievementToastActive()
+{
+    if (g_achShowing &&
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - g_achSince).count() > kAchievementSeconds)
+        g_achShowing = false;
+    if (!g_achShowing && AchievementsPopToast(g_achToast))
+    {
+        g_achShowing = true;
+        g_achSince = std::chrono::steady_clock::now();
+    }
+    return g_achShowing;
+}
+
+void AchievementToast()
+{
+    if (!AchievementToastActive())
+        return;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + em * 1.5f), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+    if (ImGui::Begin("##achievement toast", nullptr, flags))
+    {
+        if (ImTextureID icon = Icon(g_achToast.imageId))
+        {
+            ImGui::Image(icon, ImVec2(em * 2.6f, em * 2.6f));
+            ImGui::SameLine();
+        }
+        ImGui::BeginGroup();
+        ImGui::TextColored(ImVec4(0.55f, 0.95f, 0.55f, 1.0f), "Achievement unlocked");
+        ImGui::Text("%uG - %s", g_achToast.gamerscore, g_achToast.name.c_str());
+        ImGui::EndGroup();
+    }
+    ImGui::End();
+}
+
+void AchievementsTab()
+{
+    std::vector<Achievement> list = AchievementsList();
+    std::stable_partition(list.begin(), list.end(), [](const Achievement& a) { return a.unlockedAt != 0; }); // unlocked first
+    if (list.empty())
+    {
+        ImGui::TextDisabled("No achievement data (the game has not started yet).");
+        return;
+    }
+    uint32_t got = 0, score = 0, total = 0;
+    for (const Achievement& a : list)
+    {
+        total += a.gamerscore;
+        if (a.unlockedAt)
+            got++, score += a.gamerscore;
+    }
+    ImGui::Text("%u / %zu unlocked, %u / %u G", got, list.size(), score, total);
+    ImGui::TextDisabled("Kept on this PC only.");
+    const float em = ImGui::GetFontSize();
+    if (ImGui::BeginChild("achievements", ImVec2(0.0f, -ImGui::GetTextLineHeightWithSpacing() * 2.5f), ImGuiChildFlags_NavFlattened))
+    {
+        for (const Achievement& a : list)
+        {
+            ImGui::PushID(a.id);
+            const ImVec4 tint = a.unlockedAt ? ImVec4(1, 1, 1, 1) : ImVec4(0.35f, 0.35f, 0.35f, 1);
+            if (ImTextureID icon = Icon(a.imageId))
+                ImGui::ImageWithBg(icon, ImVec2(em * 2.2f, em * 2.2f), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), tint);
+            else
+                ImGui::Dummy(ImVec2(em * 2.2f, em * 2.2f));
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            // Secret ones (no "how to" text) stay hidden until unlocked.
+            const bool secret = a.howTo.empty() && !a.unlockedAt;
+            if (a.unlockedAt)
+                ImGui::Text("%s  (%uG)", a.name.c_str(), a.gamerscore);
+            else
+                ImGui::TextDisabled("%s  (%uG)", secret ? "Secret achievement" : a.name.c_str(), a.gamerscore);
+            ImGui::TextDisabled("%s", a.unlockedAt ? a.description.c_str() : secret ? "Keep playing to unlock." : a.howTo.c_str());
+            ImGui::EndGroup();
+            // A focusable row so the pad can scroll the list.
+            ImGui::Selectable("##row", false, ImGuiSelectableFlags_None, ImVec2(0.0f, 1.0f));
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+}
+
 void Menu()
 {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -396,6 +528,12 @@ void Menu()
             {
                 current = 2;
                 UpdateTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Achievements", nullptr, tab(3)))
+            {
+                current = 3;
+                AchievementsTab();
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -581,6 +719,7 @@ void Draw()
     {
         if (g_device)
             ImGui_ImplDX11_Shutdown();
+        DropIcons();
         g_device = g_renderer->Device();
         ImGui_ImplDX11_Init(g_device, g_renderer->Context());
     }
@@ -611,6 +750,7 @@ void Draw()
         Menu();
     else
         Toast();
+    AchievementToast();
     PerformanceOverlay();
     ImGui::Render();
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -626,7 +766,7 @@ void OverlayAttach(D3D11Renderer& renderer, HWND hwnd, const DisplaySettings& se
     Apply(g_settings);
     if (const char* menu = getenv("SCDA_MENU"))
     {
-        g_openTab = std::clamp(atoi(menu), 0, 2);
+        g_openTab = std::clamp(atoi(menu), 0, kTabs - 1);
         g_open = true;
         SetInputBlocked(true);
     }
@@ -646,7 +786,7 @@ void OverlayAttach(D3D11Renderer& renderer, HWND hwnd, const DisplaySettings& se
         Apply(g_settings);
         PollPadCombo();
         // Nothing to draw: no ImGui frame at all (the plain game image, no cost).
-        if (!g_open && !ToastVisible() && g_settings.performanceOverlay == DisplaySettings::OverlayOff)
+        if (!g_open && !ToastVisible() && !AchievementToastActive() && g_settings.performanceOverlay == DisplaySettings::OverlayOff)
             return;
         if (!g_imgui)
             InitImGui();

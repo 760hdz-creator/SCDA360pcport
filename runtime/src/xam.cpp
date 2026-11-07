@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <achievements.h>
 #include <runtime.h>
 #include <settings.h>
 
@@ -130,7 +131,8 @@ SCDA_IMPORT(XamEnumerate)
 // XMsgStartIORequest(App, Message, XOVERLAPPED*, Buffer, BufferSize)
 SCDA_IMPORT(XMsgStartIORequest)
 {
-    RuntimeLog("[xam] XMsgStartIORequest app 0x%X msg 0x%X buf 0x%08X size %u\n", ctx.r3.u32, ctx.r4.u32, ctx.r6.u32, ctx.r7.u32);
+    RuntimeLog("[xam] XMsgStartIORequest app 0x%X msg 0x%X buf 0x%08X size %u lr=0x%08X\n", ctx.r3.u32, ctx.r4.u32, ctx.r6.u32, ctx.r7.u32,
+        uint32_t(ctx.lr));
     if (ctx.r6.u32 && ctx.r7.u32 && ctx.r7.u32 <= 64)
     {
         std::string hex;
@@ -138,9 +140,12 @@ SCDA_IMPORT(XMsgStartIORequest)
         for (uint32_t i = 0; i < ctx.r7.u32; i += 4)
             snprintf(b, sizeof(b), " %08X", GuestLoad32(ctx.r6.u32 + i)), hex += b;
         RuntimeLog("[xam]   buffer%s\n", hex.c_str());
-        if (ctx.r3.u32 == 0xFB && ctx.r4.u32 == 0xB0008) // XUserWriteAchievements? {count, XUSER_ACHIEVEMENT*}
-            for (uint32_t i = 0, n = GuestLoad32(ctx.r6.u32), p = GuestLoad32(ctx.r6.u32 + 4); i < n && i < 16 && p; i++)
+        if (ctx.r3.u32 == 0xFB && ctx.r4.u32 == 0xB0008) // XUserWriteAchievements {count, XUSER_ACHIEVEMENT* {user, id}}
+            for (uint32_t i = 0, n = GuestLoad32(ctx.r6.u32), p = GuestLoad32(ctx.r6.u32 + 4); i < n && i < 64 && p; i++)
+            {
                 RuntimeLog("[xam]   achievement user %u id %u\n", GuestLoad32(p + i * 8), GuestLoad32(p + i * 8 + 4));
+                AchievementsUnlock(GuestLoad32(p + i * 8 + 4));
+            }
     }
     if (uint32_t ov = ctx.r5.u32)
     {
@@ -447,6 +452,7 @@ SCDA_IMPORT(XamShowDirtyDiscErrorUI)
 // u32* Handle): no achievements; XACHIEVEMENT_DETAILS is 0x1C bytes plus its strings.
 SCDA_IMPORT(XamUserCreateAchievementEnumerator)
 {
+    RuntimeLog("[xam] XamUserCreateAchievementEnumerator title 0x%X user %u count %u lr=0x%08X\n",ctx.r3.u32, ctx.r4.u32, ctx.r8.u32, uint32_t(ctx.lr));
     uint32_t count = ctx.r8.u32 ? ctx.r8.u32 : 1;
     if (ctx.r9.u32)
         GuestStore32(ctx.r9.u32, count * (0x1C + 0x200));

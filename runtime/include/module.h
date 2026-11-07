@@ -9,3 +9,6 @@ extern uint32_t g_xexHeader;
 // Entry layout (Xenia X_LDR_DATA_TABLE_ENTRY): DllBase 0x18, ImageBase 0x1C, SizeOfImage 0x20,
 // EntryPoint 0x3C, XexHeaderBase 0x58.
 void SetupExecutableModule(uint32_t moduleHandleVar, uint32_t header);
+
+// Guest address of the XEX resource `name` (resource info 0x2FF), 0 when absent; *size its bytes.
+uint32_t XexResource(const char* name, uint32_t* size);
