@@ -1265,7 +1265,21 @@ static bool EdramOverwrittenByOther(const RegisterFile& regs)
     return false;
 }
 
-static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
+// Last frame (+1, 0 = never) a MIN or REVSUB draw went to each colour base: the outdoor sun's passes on
+// the light mask (G/A, after PS cf73f1b6 copies A to B). Those lights read B = the cleared alpha, so a
+// mask that takes them must keep the depth-1 clear (Kinshasa, HQ_01_A roof).
+static uint64_t g_sunPassFrame[4096];
+
+static void NoteSunPass(const RegisterFile& regs, uint64_t frame)
+{
+    const uint32_t bc = regs[0x2201];
+    const uint32_t colorFcn = (bc >> 5) & 7, alphaFcn = (bc >> 21) & 7; // 2 = MIN, 4 = REVSUB
+    if ((regs[kRegRbModeControl] & 7) == 4 && (regs[kRegRbColorMask] & 0xF) &&
+        (colorFcn == 2 || colorFcn == 4 || alphaFcn == 2 || alphaFcn == 4))
+        g_sunPassFrame[regs[kRegRbColorInfo] & 0xFFF] = frame + 1;
+}
+
+static void AliasedClearColor(const RegisterFile& regs, float rgba[4], uint64_t frame)
 {
     rgba[0] = rgba[1] = rgba[2] = rgba[3] = 0.0f;
     const uint32_t format = (regs[kRegRbColorInfo] >> 16) & 0xF;
@@ -1281,10 +1295,16 @@ static void AliasedClearColor(const RegisterFile& regs, float rgba[4])
     // character shadows (wooden room = 360). Kinshasa's 512 map ends below 0x1C0; its no-lightmap
     // meshes are lit only by the cleared alpha, which must stay 1 there. Real hardware writes the
     // same 0 in both, so this approximates EDRAM contents we do not emulate (docs/remaining_bugs.md).
+    // Not when the target took a MIN/REVSUB (sun) pass in the last 30 frames (NoteSunPass): on the
+    // HQ_01_A roof the 1024 map renders for some views only, so the per-frame owner test flipped
+    // the sun on and off while looking around (2026-11-07). SCDA_ALIAS_NO_SUN_KEEP=1: A/B.
     // SCDA_ALIAS_FIXED_Z=1: never raw (old).
     static const bool rawZ = getenv("SCDA_ALIAS_RAW_Z") != nullptr;
     static const bool fixedZ = getenv("SCDA_ALIAS_FIXED_Z") != nullptr;
-    const bool overwritten = !fixedZ && EdramOverwrittenByOther(regs);
+    static const bool noSunKeep = getenv("SCDA_ALIAS_NO_SUN_KEEP") != nullptr;
+    const uint64_t sunAt = g_sunPassFrame[regs[kRegRbColorInfo] & 0xFFF];
+    const bool sunLit = !noSunKeep && sunAt && sunAt + 30 > frame;
+    const bool overwritten = !fixedZ && !sunLit && EdramOverwrittenByOther(regs);
     static int lastAuto = -1;
     if (getenv("SCDA_TRACE_DEPTH_ALIAS") && int(overwritten) != lastAuto)
         RuntimeLog("[zalias] auto raw z %d at color %08X (owner base %03X)\n", int(overwritten), regs[kRegRbColorInfo], g_lastForeignOwner - 1);
@@ -1367,7 +1387,9 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     HostBlend b = DecodeBlend(regs);
     const bool zeroColor = DepthOnlyOverwritesColor(regs);
     if (zeroColor)
-        AliasedClearColor(regs, b.factor); // before this draw's own marks: reads who last wrote there
+        AliasedClearColor(regs, b.factor, m_presented); // before this draw's own marks: reads who last wrote there
+    else
+        NoteSunPass(regs, m_presented);
     MarkEdramWrites(regs);
     // SCDA_TRACE_DEPTH_ALIAS=1: each distinct depth-only state once; =<n>: also every one in frame n.
     static const char* traceAliasEnv = getenv("SCDA_TRACE_DEPTH_ALIAS");
@@ -1396,6 +1418,17 @@ void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlot
     }
     else if ((regs[kRegRbModeControl] & 7) == 5) // depth-only pass (Z prepass, occlusion queries)
         b.writeMask = 0;
+    // SCDA_TRACE_MASK_BLEND=1: each distinct blend/write mask of draws into the light mask (0x1C0), per frame.
+    static const bool traceMaskBlend = getenv("SCDA_TRACE_MASK_BLEND") != nullptr;
+    if (traceMaskBlend && (regs[kRegRbModeControl] & 7) == 4 && (regs[kRegRbColorInfo] & 0xFFF) == 0x1C0)
+    {
+        static unsigned long long mbFrame = ~0ull;
+        static std::unordered_set<uint64_t> mbSeen;
+        if (mbFrame != m_presented)
+            mbSeen.clear(), mbFrame = m_presented;
+        if (mbSeen.insert((uint64_t(regs[0x2201]) << 4) | (regs[kRegRbColorMask] & 0xF)).second)
+            RuntimeLog("[mblend] frame %llu blend %08X cmask %X\n", m_presented, regs[0x2201], regs[kRegRbColorMask] & 0xF);
+    }
     // SCDA_TRACE_BLEND=1: each RB_BLENDCONTROL0 per RT0 format and write mask once.
     static const bool traceBlend = getenv("SCDA_TRACE_BLEND") != nullptr;
     static std::unordered_set<uint64_t> blendSeen;

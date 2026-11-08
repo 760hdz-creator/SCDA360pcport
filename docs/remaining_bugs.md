@@ -285,6 +285,12 @@ Evidence paths under `_run/` are local only (git-ignored).
     (`reg_sheet.png`, diffs = animation). `SCDA_ALIAS_FIXED_Z=1` = old, `SCDA_ALIAS_RAW_Z=1` = always raw,
     `SCDA_TRACE_DEPTH_ALIAS=1` logs decisions + writers over 0x1C0. shortcut: approximates the leftover EDRAM bytes by
     the owner's format; a full EDRAM model would copy them.
+  - **2026-11-07 regression: HQ_01_A roof sun flips on/off while looking around** (user save
+    `001300070031000b0035029b15a454aa`, `_run/roof/roof.launch`, `_run/roof/pan.sh`, `lum.py` flags +-16 luma steps). The
+    1024 R32F map renders for some views only, so the owner test chose raw z on those frames; the sun (MIN/REVSUB on mask
+    G/A, `01410141`/`01810181`, in every roof frame) then sat on B = 0 and the whole roof went dark. Wooden room has no
+    MIN/REVSUB mask pass (`SCDA_TRACE_MASK_BLEND=1`). Fix: no raw z for a target that took a MIN/REVSUB pass in the last
+    30 frames (`NoteSunPass`). Roof: no flips; wooden room: raw on all frames, shadows kept. `SCDA_ALIAS_NO_SUN_KEEP=1` = old.
 
 ## FIXED. Kinshasa ground and walls stuck in shadow, no character shadows (2026-10-31)
 
