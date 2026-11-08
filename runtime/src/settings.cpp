@@ -107,6 +107,8 @@ DisplaySettings LoadDisplaySettings(const std::filesystem::path& ini)
             s.cleanGoggles = Truthy(value);
         else if (key == "drawbackfaces")
             s.drawBackFaces = Truthy(value);
+        else if (key == "dynamicshadows")
+            s.dynamicShadows = Truthy(value);
         else if (key == "fov")
         {
             int v = atoi(value.c_str());

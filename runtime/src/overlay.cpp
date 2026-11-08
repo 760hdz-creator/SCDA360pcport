@@ -86,6 +86,7 @@ void Apply(const DisplaySettings& s)
     g_renderer->SetAnisotropy(s.anisotropy);
     g_renderer->SetCleanGoggles(s.cleanGoggles);
     g_renderer->SetDrawBackFaces(s.drawBackFaces);
+    g_renderer->SetDynamicShadows(s.dynamicShadows);
     SetFovOverride(float(s.fov));
 }
 
@@ -108,6 +109,8 @@ void Save(const DisplaySettings& before, const DisplaySettings& after)
         save("FOV", std::to_string(after.fov));
     if (before.drawBackFaces != after.drawBackFaces)
         save("DrawBackFaces", after.drawBackFaces ? "1" : "0");
+    if (before.dynamicShadows != after.dynamicShadows)
+        save("DynamicShadows", after.dynamicShadows ? "1" : "0");
     if (before.antiAliasing != after.antiAliasing)
         save("AntiAliasing", AntiAliasingName(after.antiAliasing));
     if (before.sharpening != after.sharpening)
@@ -202,6 +205,7 @@ void Preset(DisplaySettings& s, int level)
     s.antiAliasing = level == 0 ? DisplaySettings::AaOff : DisplaySettings::AaFxaa;
     s.anisotropy = aniso[level];
     s.sharpening = sharpen[level];
+    s.dynamicShadows = level > 0;
     if (level == 3)
         s.scale = std::min<uint32_t>(4, UpscalingScale(DisplaySettings::UpNative, g_renderer->Height(), 1) + 1);
 }
@@ -242,6 +246,9 @@ void GraphicsTab(DisplaySettings& s)
         s.upscaling = DisplaySettings::Upscaling(up);
     Hint("FSR 1-style: picks the internal resolution from the window height divided by the mode's ratio "
          "(in 720-row steps), then upscales with a Lanczos filter, or filters down when it is larger. The menu stays sharp.");
+    ImGui::Checkbox("Dynamic shadows", &s.dynamicShadows);
+    Hint("Shadows cast by characters and objects from lamps and the sun. Off keeps the lights but drops their "
+         "shadows, which saves some GPU time. Baked level shadows stay.");
     ImGui::Checkbox("Solid walls from inside", &s.drawBackFaces);
     Hint("Draws opaque surfaces from both sides, so one-sided walls stay solid when the camera is inside a building "
          "(Iceland). Off = the console's culling.");

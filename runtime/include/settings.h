@@ -19,6 +19,8 @@ struct DisplaySettings
     // culling: the Iceland shack holes were the BSP index-offset bug, and drawing both sides put the
     // back of the mirror wall into the Hotel bathroom mirror's reflection pass.
     bool drawBackFaces = false;
+    // Dynamic (shadow-mapped) shadows ([Display] DynamicShadows=0 turns them off; lights stay on).
+    bool dynamicShadows = true;
     // Field of view in degrees ([Display] FOV=60..110). 75 is the game's own (nothing is changed).
     uint32_t fov = 75;
     // Post-processing on the presented frame (F1 menu, Graphics). Defaults leave the image as the

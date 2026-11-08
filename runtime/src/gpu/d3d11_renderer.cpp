@@ -1969,7 +1969,15 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     }();
     const bool skipIb = std::any_of(skipIbs.begin(), skipIbs.end(),
         [&](const auto& s) { return s.first == d.indexBase && (!s.second || (d.vs && d.vs->hash == s.second)); });
-    const bool skipped = skipIb || (d.ps && d.ps->hash == kScopeBandPs && !keepScopeBand) || (d.vs && d.ps &&
+    // Dynamic shadows off (issue #16): skip the shadow casters, i.e. 3D draws (viewport transform on,
+    // depth test + write) into a 32_FLOAT colour target (the light-depth maps). The maps keep their
+    // clear (far), so every compare tap passes and lights stay on without shadows. Without the depth
+    // condition Kinshasa01 went white (another 32F target, no depth write). SCDA_NO_DYNAMIC_SHADOWS=1 forces off.
+    static const bool noShadowsEnv = getenv("SCDA_NO_DYNAMIC_SHADOWS") != nullptr;
+    const bool skipCaster = (noShadowsEnv || !m_dynamicShadows) && (r.regs[kRegRbModeControl] & 7) == 4 &&
+        ((r.regs[kRegRbColorInfo] >> 16) & 0xF) == 0xE && (r.regs[kRegRbColorMask] & 0xF) && (r.regs[0x2206] & 0xC) == 0xC &&
+        (r.regs[0x2200] & 6) == 6;
+    const bool skipped = skipIb || skipCaster || (d.ps && d.ps->hash == kScopeBandPs && !keepScopeBand) || (d.vs && d.ps &&
         std::find_if(skipShaders.begin(), skipShaders.end(), [&](uint64_t h) { return h == d.vs->hash || h == d.ps->hash; }) != skipShaders.end()) ||
         (clean && d.vs && d.ps && d.vs->hash == kGoggleOverlayVs && d.ps->hash == kGoggleOverlayPs);
     // Fetch slot to replace by its 1x1 average, -1 = none.

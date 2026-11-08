@@ -25,6 +25,8 @@ TEST(settings_parsed)
     DisplaySettings s = LoadDisplaySettings(Ini("[Display]\nScale=2\nMode=borderless\nVSync=0\nCleanGoggles=1\n"));
     CHECK(s.cleanGoggles);
     CHECK(LoadDisplaySettings(Ini("[Display]\nDrawBackFaces=1\n")).drawBackFaces);
+    CHECK(LoadDisplaySettings(Ini("")).dynamicShadows);
+    CHECK(!LoadDisplaySettings(Ini("[Display]\nDynamicShadows=0\n")).dynamicShadows);
     CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nFOV=95\n")).fov, 95u);
     CHECK_EQ(LoadDisplaySettings(Ini("[Display]\nFOV=300\n")).fov, 75u);
     CHECK_EQ(s.scale, 2u);
