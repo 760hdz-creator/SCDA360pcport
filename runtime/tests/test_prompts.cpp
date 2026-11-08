@@ -1,5 +1,7 @@
 #include "check.h"
+#include <algorithm>
 #include <cstring>
+#include <string>
 #include <gpu/draw_state.h>
 #include <prompts.h>
 #include <settings.h>
@@ -143,6 +145,63 @@ TEST(prompt_continue_bmp_patched)
     put32(18, 640);
     std::vector<uint8_t> other = bmp;
     CHECK(!PromptPatchContinueBmp(other, PromptStyle::PS5)); // unknown layout left alone
+}
+
+// Save/load dialogs (#30): the "Xbox 360 console" body is redrawn, title and rule kept, size kept.
+TEST(prompt_console_dialog_patched)
+{
+    constexpr int w = 500, h = 311, plane = w * h;
+    const uint8_t level[3] = { 181, 220, 196 };
+    std::vector<uint8_t> raw(size_t(plane) * 3, 0);
+    for (int p = 0; p < 3; p++)
+    {
+        for (int x = 24; x < 476; x++)
+            raw[size_t(p) * plane + 63 * w + x] = uint8_t(level[p] / 2), raw[size_t(p) * plane + 40 * w + x] = 150; // rule, title
+        for (int y = 80; y < 99; y++)
+            for (int x = 28; x < 400; x += 3)
+                raw[size_t(p) * plane + size_t(y) * w + x] = level[p]; // old body
+    }
+    std::vector<uint8_t> other = raw;
+    CHECK(!PromptPatchConsoleDialog(other, "int", "PROFILECHANGE.raw"));
+    CHECK(!PromptPatchConsoleDialog(other, "kor", "LOADINGDATA.raw"));
+    CHECK(other == raw);
+    for (const char* lang : { "int", "fra", "deu", "esp", "ita", "jap" })
+        for (const char* name : { "LOADINGDATA.RAW", "savingdata.raw", "DELETINGDATA.raw", "RETRIEVINGDATA.raw" })
+        {
+            std::vector<uint8_t> out = raw;
+            CHECK(PromptPatchConsoleDialog(out, lang, name));
+            CHECK(out.size() == raw.size());
+            for (int p = 0; p < 3; p++)
+            {
+                const size_t base = size_t(p) * plane;
+                CHECK(memcmp(&out[base], &raw[base], 72 * w) == 0); // title + rule untouched
+                uint8_t peak = 0;
+                size_t ink = 0;
+                for (int i = 72 * w; i < plane; i++)
+                    peak = std::max(peak, out[base + i]), ink += out[base + i] > 64;
+                CHECK(peak <= level[p] && peak + 8 >= level[p]); // same tint
+                CHECK(ink > 300);
+                CHECK(memcmp(&out[base + 72 * w], &raw[base + 72 * w], size_t(plane - 72 * w)) != 0);
+            }
+        }
+    if (const char* dir = getenv("SCDA_DUMP_PROMPTS"))
+    {
+        const std::string src = std::string(SCDA_ROOT) + "/_install/game/System/Screens/";
+        for (const char* lang : { "int", "fra", "deu", "esp", "ita" })
+            for (const char* name : { "LOADINGDATA.raw", "RETRIEVINGDATA.raw" })
+                if (FILE* f = fopen((src + lang + "/" + name).c_str(), "rb"))
+                {
+                    std::vector<uint8_t> real(size_t(plane) * 3);
+                    const bool ok = fread(real.data(), 1, real.size(), f) == real.size();
+                    fclose(f);
+                    CHECK(ok && PromptPatchConsoleDialog(real, lang, name));
+                    if (FILE* o = fopen((std::string(dir) + "/" + lang + "_" + name).c_str(), "wb"))
+                    {
+                        fwrite(real.data(), 1, real.size(), o);
+                        fclose(o);
+                    }
+                }
+    }
 }
 
 TEST(button_prompts_setting_read)

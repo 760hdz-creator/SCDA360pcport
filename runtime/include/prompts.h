@@ -37,3 +37,8 @@ bool PromptRedraw(int index, PromptStyle style, std::vector<uint32_t>& texels, u
 // Loading-screen strip Screens\<lang>\Continue.bmp has its A button baked in: redraw it for
 // `style` in place (whole BMP file bytes). False (untouched) for Xbox or an unknown layout.
 bool PromptPatchContinueBmp(std::vector<uint8_t>& file, PromptStyle style);
+// Screens\<lang>\{LOADING,SAVING,DELETING,RETRIEVING}DATA.raw (500x311 x3 planar R/G/B, 8-bit)
+// bake in "don't turn off your Xbox 360 console": redraw the body text to say PC, in place.
+// `lang` is the folder (int/fra/deu/esp/ita/jap), `name` the file name. False (untouched) for
+// any other file, an unknown language, or a layout we do not know. Applies to every prompt style.
+bool PromptPatchConsoleDialog(std::vector<uint8_t>& file, const char* lang, const char* name);

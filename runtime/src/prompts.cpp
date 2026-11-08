@@ -563,3 +563,109 @@ bool PromptPatchContinueBmp(std::vector<uint8_t>& file, PromptStyle style)
         }
     return true;
 }
+
+// ---- "don't turn off your Xbox 360 console" dialogs (GitLab #30) -----------------------------
+// Each file is 3 planes (R, G, B) of 500x311 8-bit; title rows 29-60, rule 63-64, body from row 80
+// (cap height ~18.5 px, baseline ~98.5, 30 px pitch, left edge x 27), background 0. The body is
+// erased in every plane and redrawn in Bahnschrift 24 px (DIN, like the original; Arial if absent),
+// each plane at its old body-text peak so the green tint stays.
+bool PromptPatchConsoleDialog(std::vector<uint8_t>& file, const char* lang, const char* name)
+{
+    constexpr int kW = 500, kH = 311, kPlane = kW * kH, kBodyTop = 72, kLeft = 26, kMaxWidth = 440, kPitch = 30;
+    constexpr float kBaseline = 98.5f, kSize = 24.0f;
+    if (file.size() != size_t(kPlane) * 3 || !lang || !name)
+        return false;
+    static const struct { const char* lang; const wchar_t* body; const wchar_t* retrieving; } kText[] = {
+        { "int", L"Please don't turn off your PC.", L"Retrieving data from storage device, please don't turn off your PC." },
+        { "jap", L"Please don't turn off your PC.", L"Retrieving data from storage device, please don't turn off your PC." },
+        { "fra", L"Ne pas éteindre le PC.",
+          L"Chargement des données à partir du périphérique de stockage. Ne pas éteindre le PC." },
+        { "deu", L"Schalten Sie den PC nicht aus.", L"Daten werden vom Speichergerät abgerufen. Schalten Sie den PC nicht aus." },
+        { "esp", L"Por favor, no apagues el PC.", L"Cargando datos de la unidad de almacenamiento. Por favor, no apagues el PC." },
+        { "ita", L"Non spegnere il PC.", L"Recupero dati dal dispositivo di salvataggio, non spegnere il PC." },
+    };
+    const wchar_t* text = nullptr;
+    for (auto& t : kText)
+        if (!_stricmp(lang, t.lang))
+        {
+            if (!_stricmp(name, "retrievingdata.raw"))
+                text = t.retrieving;
+            else if (!_stricmp(name, "loadingdata.raw") || !_stricmp(name, "savingdata.raw") || !_stricmp(name, "deletingdata.raw"))
+                text = t.body;
+        }
+    if (!text)
+        return false;
+    // Layout check: body ink starts at row 80 and the background is black.
+    uint8_t peak[3] = {};
+    for (int p = 0; p < 3; p++)
+    {
+        const uint8_t* plane = &file[size_t(p) * kPlane];
+        for (int i = kBodyTop * kW; i < kPlane; i++)
+            peak[p] = std::max(peak[p], plane[i]);
+        for (int i = kBodyTop * kW; i < 80 * kW; i++)
+            if (plane[i] > 16)
+                return false;
+        if (peak[p] < 64 || plane[kPlane - 1] != 0)
+            return false;
+    }
+
+    StartGdiplus();
+    const int S = kSuper;
+    Bitmap bmp(kW * S, (kH - kBodyTop) * S, PixelFormat32bppARGB);
+    {
+        Graphics g(&bmp);
+        g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+        g.Clear(Color(0, 0, 0, 0));
+        FontFamily bahn(L"Bahnschrift");
+        FontFamily arial(L"Arial");
+        const FontFamily& family = bahn.IsAvailable() ? bahn : arial;
+        Font font(&family, kSize * S, FontStyleRegular, UnitPixel);
+        const float ascent = kSize * S * family.GetCellAscent(FontStyleRegular) / float(family.GetEmHeight(FontStyleRegular));
+        SolidBrush white(Color(255, 255, 255, 255));
+        auto width = [&](const std::wstring& s)
+        {
+            RectF box;
+            g.MeasureString(s.c_str(), -1, &font, PointF(0, 0), StringFormat::GenericTypographic(), &box);
+            return box.Width / S;
+        };
+        // Greedy word wrap.
+        std::vector<std::wstring> lines(1);
+        for (const wchar_t* p = text; *p;)
+        {
+            const wchar_t* e = wcschr(p, L' ');
+            std::wstring word = e ? std::wstring(p, e) : std::wstring(p);
+            std::wstring trial = lines.back().empty() ? word : lines.back() + L" " + word;
+            if (!lines.back().empty() && width(trial) > kMaxWidth)
+                lines.push_back(word);
+            else
+                lines.back() = trial;
+            p = e ? e + 1 : p + wcslen(p);
+        }
+        for (size_t i = 0; i < lines.size(); i++)
+        {
+            const float y = (kBaseline + kPitch * float(i) - kBodyTop) * S - ascent;
+            g.DrawString(lines[i].c_str(), -1, &font, PointF(float(kLeft * S), y), StringFormat::GenericTypographic(), &white);
+        }
+        g.Flush();
+    }
+    BitmapData data{};
+    Rect all(0, 0, kW * S, (kH - kBodyTop) * S);
+    if (bmp.LockBits(&all, ImageLockModeRead, PixelFormat32bppARGB, &data) != Ok)
+        return false;
+    for (int y = kBodyTop; y < kH; y++)
+        for (int x = 0; x < kW; x++)
+        {
+            uint32_t a = 0;
+            for (int sy = 0; sy < S; sy++)
+            {
+                const uint32_t* row = reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(data.Scan0) + ((y - kBodyTop) * S + sy) * data.Stride);
+                for (int sx = 0; sx < S; sx++)
+                    a += row[x * S + sx] >> 24;
+            }
+            a /= S * S;
+            for (int p = 0; p < 3; p++)
+                file[size_t(p) * kPlane + size_t(y) * kW + x] = uint8_t((a * peak[p] + 127) / 255);
+        }
+    bmp.UnlockBits(&data);
+    return true;
+}

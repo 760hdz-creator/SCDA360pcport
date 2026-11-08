@@ -172,8 +172,46 @@ bool CloseGuestFile(uint32_t handle)
 
 // Screens\<lang>\Continue.bmp bakes in the Xbox A button: for other prompt styles, open a copy
 // redrawn by PromptPatchContinueBmp (next to settings.ini, prompts\Continue_<lang>_<style>.bmp).
+// Screens\<lang>\*DATA.raw save/load dialogs say "Xbox 360 console": open a copy saying PC
+// (PromptPatchConsoleDialog, prompts\<name>_<lang>_pc<version>.raw). SCDA_NO_PC_TEXT=1 keeps them.
+static std::string ConsoleDialogPath(const std::string& host)
+{
+    constexpr int kVersion = 1; // bump when the strings or layout change
+    static const bool off = getenv("SCDA_NO_PC_TEXT") && *getenv("SCDA_NO_PC_TEXT") == '1';
+    const size_t slash = host.find_last_of('\\');
+    if (off || slash == std::string::npos || slash == 0)
+        return host;
+    const std::string name = host.substr(slash + 1);
+    if (name.size() < 8 || _stricmp(name.c_str() + name.size() - 8, "data.raw") != 0)
+        return host;
+    const size_t langSlash = host.find_last_of('\\', slash - 1);
+    const std::string lang = langSlash == std::string::npos ? "x" : host.substr(langSlash + 1, slash - langSlash - 1);
+    const std::filesystem::path dir = SettingsPath().parent_path() / "prompts";
+    const std::filesystem::path out = dir / (name.substr(0, name.size() - 4) + "_" + lang + "_pc" + std::to_string(kVersion) + ".raw");
+    std::error_code ec;
+    if (std::filesystem::file_size(out, ec) == 466500 && !ec) // written by an earlier run
+        return out.string();
+    std::vector<uint8_t> bytes;
+    {
+        std::ifstream in(host, std::ios::binary);
+        bytes.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    if (!PromptPatchConsoleDialog(bytes, lang.c_str(), name.c_str()))
+        return host;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream o(out, std::ios::binary | std::ios::trunc);
+    o.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
+    o.close();
+    if (!o.good())
+        return host;
+    RuntimeLog("[prompts] %s -> %s\n", host.c_str(), out.string().c_str());
+    return out.string();
+}
+
 static std::string PromptScreenPath(const std::string& host)
 {
+    if (std::string pc = ConsoleDialogPath(host); pc != host)
+        return pc;
     const size_t slash = host.find_last_of('\\');
     const PromptStyle style = CurrentPromptStyle();
     if (style == PromptStyle::Xbox || slash == std::string::npos || slash == 0 || _stricmp(host.c_str() + slash + 1, "continue.bmp") != 0)
