@@ -175,14 +175,44 @@ void FovTick()
     {
         static uint32_t cls = 0, offX = 0, offY = 0;
         static const bool testMouse = getenv("SCDA_TEST_MOUSEX") != nullptr;
+        // States that do not turn the view from aMouseX (briefings, menus, and any right-stick minigame
+        // such as a lock) fall back to the stick mapping: 6 ticks of yaw writes with no yaw change switch
+        // to the stick, any yaw change (stick, pad, script) switches back. A gap of over 100 ms since the
+        // last tick (load hitch) drops the pending total instead of turning it all at once.
+        static uint32_t rotOff = 0, lastYaw = 0;
+        static int stuck = 0;
+        static bool fallback = false;
+        static uint64_t lastMs = 0;
+        static float lastX = 0;
         if (cls != g_controllerClass)
-            cls = g_controllerClass, offX = PropertyOffset(cls, "aMouseX"), offY = PropertyOffset(cls, "aMouseY");
-        const bool live = offX && offY && GuestLoad32(g_controller + 0x24) == g_controllerClass && !testMouse;
-        MouseLookSetLive(live);
-        if (live)
+            cls = g_controllerClass, offX = PropertyOffset(cls, "aMouseX"), offY = PropertyOffset(cls, "aMouseY"),
+            rotOff = PropertyOffset(cls, "Rotation"), stuck = 0, fallback = false;
+        const bool valid = offX && offY && rotOff && GuestLoad32(g_controller + 0x24) == g_controllerClass && !testMouse;
+        const uint32_t yaw = valid ? GuestLoad32(g_controller + rotOff + 4) : 0;
+        const bool yawMoved = yaw != lastYaw;
+        lastYaw = yaw;
+        if (fallback && yawMoved)
         {
-            float x, y;
+            fallback = false, stuck = 0;
+            RuntimeLog("[mouse] view turns again: direct mouse look\n");
+        }
+        const uint64_t now = GetTickCount64();
+        const bool gap = now - lastMs > 100;
+        lastMs = now;
+        MouseLookSetLive(valid && !fallback);
+        if (valid)
+        {
+            float x = 0, y = 0;
             MouseLookTake(x, y);
+            if (gap || fallback)
+                x = y = 0;
+            stuck = lastX != 0 && !yawMoved ? stuck + 1 : 0; // last tick's write had its chance to turn
+            lastX = x;
+            if (stuck >= 6)
+            {
+                fallback = true, x = y = 0, lastX = 0;
+                RuntimeLog("[mouse] view not turning: mouse drives the right stick\n");
+            }
             StoreFloat(g_controller + offX, x);
             StoreFloat(g_controller + offY, y);
         }
