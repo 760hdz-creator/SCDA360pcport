@@ -46,8 +46,8 @@ HWND g_hwnd;
 DisplaySettings g_settings; // as shown in the menu and saved to settings.ini
 ID3D11Device* g_device;      // the ImGui DX11 backend's (a lost device makes a new one)
 bool g_imgui;
-int g_openTab = -1; // SCDA_MENU=<0-3>: the menu starts open on that tab (unattended checks)
-constexpr int kTabs = 4;
+int g_openTab = -1; // SCDA_MENU=<0-4>: the menu starts open on that tab (unattended checks)
+constexpr int kTabs = 5;
 int g_tabStep = 0;  // L1/R1 (LB/RB) pressed in the menu: -1 previous tab, +1 next
 
 // Update notification: shown once, when the check has answered and the player has signed in at the
@@ -152,16 +152,6 @@ void DisplayTab(DisplaySettings& s)
         s.monitor = uint32_t(monitor);
     if (monitors > 1)
         Hint("Which monitor the game opens on. Applies the next time the game starts.");
-    ImGui::SliderFloat("Brightness", &s.brightness, 0.5f, 2.0f, s.brightness == 1.0f ? "%.2f (default)" : "%.2f");
-    Hint("Scales the final image before gamma. 1.00 = as on the console. Double-click to type a value.");
-    ImGui::SliderFloat("Gamma", &s.gamma, 0.5f, 2.0f, s.gamma == 1.0f ? "%.2f (default)" : "%.2f");
-    Hint("Above 1 lifts dark areas (shadows stay readable on bright monitors), below 1 deepens them. 1.00 = as on the console.");
-    if (ImGui::Button("Reset brightness and gamma"))
-        s.gamma = s.brightness = 1.0f;
-    int perf = s.performanceOverlay;
-    if (ImGui::Combo("Performance overlay", &perf, kOverlayNames, 3))
-        s.performanceOverlay = DisplaySettings::Overlay(perf);
-    Hint("Corner readout: FPS, or FPS + frame time, CPU use of the game and resolution.");
     ImGui::Checkbox("VSync", &s.vsync);
     ImGui::BeginDisabled(s.upscaling != DisplaySettings::UpOff);
     int scale = int(s.scale);
@@ -171,13 +161,21 @@ void DisplayTab(DisplaySettings& s)
     ImGui::EndDisabled();
     Hint("Renders at 1280x720 times this and filters down to the window (supersampling). "
          "Scale 2 holds 30 fps on the heaviest map. Graphics > Upscaling picks it from the window size instead.");
-    static const int levels[] = { 1, 2, 4, 8, 16 };
-    int level = 0;
-    while (level < 4 && levels[level] < int(s.anisotropy))
-        level++;
-    const char* const names[] = { "Off", "2x", "4x", "8x", "16x" };
-    if (ImGui::Combo("Anisotropic filtering", &level, names, 5))
-        s.anisotropy = uint32_t(levels[level]);
+    int perf = s.performanceOverlay;
+    if (ImGui::Combo("Performance overlay", &perf, kOverlayNames, 3))
+        s.performanceOverlay = DisplaySettings::Overlay(perf);
+    Hint("Corner readout: FPS, or FPS + frame time, CPU use of the game and resolution.");
+}
+
+void GameTab(DisplaySettings& s)
+{
+    ImGui::SliderFloat("Brightness", &s.brightness, 0.5f, 2.0f, s.brightness == 1.0f ? "%.2f (default)" : "%.2f");
+    Hint("Scales the final image before gamma. 1.00 = as on the console. Double-click to type a value.");
+    ImGui::SliderFloat("Gamma", &s.gamma, 0.5f, 2.0f, s.gamma == 1.0f ? "%.2f (default)" : "%.2f");
+    Hint("Above 1 lifts dark areas (shadows stay readable on bright monitors), below 1 deepens them. 1.00 = as on the console.");
+    if (ImGui::Button("Reset brightness and gamma"))
+        s.gamma = s.brightness = 1.0f;
+    ImGui::Separator();
     int fov = int(s.fov);
     if (ImGui::SliderInt("Field of view", &fov, 60, 110, fov == 75 ? "%d (default)" : "%d"))
         s.fov = uint32_t(fov);
@@ -228,6 +226,13 @@ void GraphicsTab(DisplaySettings& s)
     Hint("FXAA smooths edges after the frame is drawn, at the internal resolution. The game's own 4x MSAA "
          "is always on; higher internal resolutions add supersampling.");
     ImGui::TextDisabled("MSAA: 4x (the game's own, always on)");
+    static const int levels[] = { 1, 2, 4, 8, 16 };
+    int level = 0;
+    while (level < 4 && levels[level] < int(s.anisotropy))
+        level++;
+    const char* const names[] = { "Off", "2x", "4x", "8x", "16x" };
+    if (ImGui::Combo("Anisotropic filtering", &level, names, 5))
+        s.anisotropy = uint32_t(levels[level]);
     int sharpen = int(s.sharpening);
     if (ImGui::SliderInt("Image sharpening", &sharpen, 0, 100, "%d%%"))
         s.sharpening = uint32_t(sharpen);
@@ -480,7 +485,7 @@ void AchievementsTab()
     ImGui::Text("%u / %u unlocked, %u / %u G", got, count, score, total);
     ImGui::TextDisabled("Kept on this PC only.");
     const float em = ImGui::GetFontSize();
-    if (ImGui::BeginChild("achievements", ImVec2(0.0f, -ImGui::GetTextLineHeightWithSpacing() * 2.5f), ImGuiChildFlags_NavFlattened))
+    if (ImGui::BeginChild("achievements", ImVec2(0.0f, 0.0f), ImGuiChildFlags_NavFlattened))
     {
         bool mpHeader = false;
         for (const Achievement& a : list)
@@ -520,7 +525,7 @@ void Menu()
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(em * 40.0f, em * 22.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(std::min(em * 40.0f, vp->WorkSize.x * 0.95f), std::min(em * 30.0f, vp->WorkSize.y * 0.9f)), ImGuiCond_Always);
     if (ImGui::Begin("Extra Settings - Splinter Cell: Double Agent Recomp", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
     {
         const DisplaySettings before = g_settings;
@@ -535,33 +540,24 @@ void Menu()
         g_tabStep = 0;
         // Widgets leave room for the longest label and its (?) on the right.
         ImGui::PushItemWidth(-em * 15.0f);
+        // Footer height: separator + two text lines. Tab content scrolls above it, never under it.
+        const float footer = ImGui::GetTextLineHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y * 2.0f;
         if (ImGui::BeginTabBar("tabs"))
         {
             auto tab = [](int i) { return g_openTab == i ? ImGuiTabItemFlags_SetSelected : 0; };
-            if (ImGui::BeginTabItem("Display", nullptr, tab(0)))
-            {
-                current = 0;
-                DisplayTab(g_settings);
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Graphics", nullptr, tab(1)))
-            {
-                current = 1;
-                GraphicsTab(g_settings);
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Update", nullptr, tab(2)))
-            {
-                current = 2;
-                UpdateTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Achievements", nullptr, tab(3)))
-            {
-                current = 3;
-                AchievementsTab();
-                ImGui::EndTabItem();
-            }
+            static void (*const bodies[kTabs])() = {
+                [] { DisplayTab(g_settings); }, [] { GraphicsTab(g_settings); }, [] { GameTab(g_settings); }, UpdateTab, AchievementsTab
+            };
+            static const char* const names[kTabs] = { "Display", "Graphics", "Game", "Update", "Achievements" };
+            for (int i = 0; i < kTabs; i++)
+                if (ImGui::BeginTabItem(names[i], nullptr, tab(i)))
+                {
+                    current = i;
+                    if (ImGui::BeginChild("content", ImVec2(0.0f, -footer), ImGuiChildFlags_NavFlattened))
+                        bodies[i]();
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
+                }
             ImGui::EndTabBar();
             g_openTab = -1;
         }
@@ -572,8 +568,7 @@ void Menu()
         const bool ps = style == PromptStyle::PS4 || style == PromptStyle::PS5;
         const char* tabs = style == PromptStyle::Keyboard ? "Q / E" : ps ? "L1 / R1" : "LB / RB";
         const char* close = style == PromptStyle::Keyboard ? "F1 / Esc" : ps ? "OPTIONS / L3+R3" : "Start / L3+R3";
-        ImGui::SetCursorPosY(ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y - ImGui::GetTextLineHeightWithSpacing() * 2.0f -
-                             ImGui::GetStyle().ItemSpacing.y * 2.0f);
+        ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y - footer));
         ImGui::Separator();
         ImGui::TextDisabled("Switch tabs: %s    Close: %s", tabs, close);
         ImGui::TextDisabled("Changes save at once.");
