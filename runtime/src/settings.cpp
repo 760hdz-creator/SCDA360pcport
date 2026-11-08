@@ -68,6 +68,8 @@ InputSettings LoadInputSettings(const std::filesystem::path& ini)
             else if (key == "gamepadsensitivity" && v >= 0.25f && v <= 3.0f)
                 s.gamepadSensitivity = v;
         }
+        else if (key == "mousemode")
+            s.mouseDirect = Lower(value) != "stick";
         else if (key == "mousesensitivity")
         {
             float v = float(atof(value.c_str()));

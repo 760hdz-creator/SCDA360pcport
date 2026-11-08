@@ -51,6 +51,8 @@ TEST(input_settings_parsed_and_defaulted)
     CHECK(bad.mouseSensitivity == 1.0f);
     CHECK(d.sdlGamepads && LoadInputSettings(Ini("[Input]\nPlayStationNative=1\n")).sdlGamepads);
     CHECK(!LoadInputSettings(Ini("[Input]\nPlayStationNative=0\n")).sdlGamepads);
+    CHECK(d.mouseDirect && !LoadInputSettings(Ini("[Input]\nMouseMode=Stick\n")).mouseDirect);
+    CHECK(LoadInputSettings(Ini("[Input]\nMouseMode=Direct\n")).mouseDirect);
 }
 
 TEST(settings_post_processing_parsed)

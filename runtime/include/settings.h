@@ -50,6 +50,7 @@ struct InputSettings
     bool mouseLook = true;         // raw mouse motion drives the right stick while the window has focus
     float mouseSensitivity = 1.0f; // full stick deflection at 50 / sensitivity pixels per poll (0.1..10)
     bool mouseInvertY = false;
+    bool mouseDirect = true;       // [Input] MouseMode=Direct|Stick (input.h MouseToLook; Stick = old right-stick mapping)
     bool sdlGamepads = true;       // [Input] PlayStationNative: SDL3 gamepads (PlayStation, Switch) when no XInput pad
     std::string buttonPrompts = "Auto"; // [Input] ButtonPrompts: Auto|Xbox|PlayStation|Keyboard (prompts.h)
     bool gamepad = true;              // [Input] Gamepad=0: ignore controllers (keyboard and mouse only)

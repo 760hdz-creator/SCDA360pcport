@@ -20,6 +20,19 @@ XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk));
 void MouseAccumulate(int dx, int dy, int wheel);
 void MouseTake(int& dx, int& dy, int& wheel);
 void MouseToStick(int dx, int dy, float sensitivity, bool invertY, int16_t& rx, int16_t& ry);
+// [Input] MouseMode=Direct (default): mouse motion goes to the player controller's aMouseX/aMouseY,
+// the engine's own PC mouse path (issue #29: linear, no dead zone, no full-tilt boost), instead of
+// the right stick. The script turns yaw by 40000 per unit aMouseX and pitch by 25000 per unit
+// aMouseY (positive = down) each tick, not scaled by frame time. kMouseUnitsPerCount rotation units
+// (65536 = 360 deg) per count at sensitivity 1, i.e. ~0.066 deg.
+constexpr float kMouseUnitsPerCount = 12.0f;
+void MouseToLook(int dx, int dy, float sensitivity, bool invertY, float& aMouseX, float& aMouseY);
+// The tick side (fov.cpp) marks the direct path live each engine tick it can write; the poll side
+// then feeds MouseLookAdd instead of the stick. MouseLookTake drains the total for one tick.
+void MouseLookSetLive(bool live);
+bool MouseLookLive();
+void MouseLookAdd(float aMouseX, float aMouseY);
+void MouseLookTake(float& aMouseX, float& aMouseY);
 
 // The F1 menu is open: the title sees an idle pad (no pad, keyboard or mouse input reaches it).
 void SetInputBlocked(bool blocked);

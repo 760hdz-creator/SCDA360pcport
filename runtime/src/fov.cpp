@@ -2,8 +2,10 @@
 // reflection on the controller object seen by the script-event thunk (travel_trace.cpp hook of
 // sub_8258E908). Layout (STATE.md): UObject +0x20 name, +0x24 class; UField +0x2C super, +0x30 next;
 // UStruct +0x40 children; UProperty +0x48 offset (high 16 bits).
+#include <windows.h>
 #include <runtime.h>
 #include <fov.h>
+#include <input.h>
 #include "gpu/draw_state.h"
 #include <atomic>
 #include <cstdlib>
@@ -163,7 +165,68 @@ void FovTick()
             }
     }
     if (!g_controller)
+    {
+        MouseLookSetLive(false);
         return;
+    }
+    // Mouse look (input.h MouseToLook): every tick, this tick's mouse total into aMouseX/aMouseY (0 when
+    // idle, so a value never lingers). Only while the controller object still has its class (not stale
+    // across a level change).
+    {
+        static uint32_t cls = 0, offX = 0, offY = 0;
+        static const bool testMouse = getenv("SCDA_TEST_MOUSEX") != nullptr;
+        if (cls != g_controllerClass)
+            cls = g_controllerClass, offX = PropertyOffset(cls, "aMouseX"), offY = PropertyOffset(cls, "aMouseY");
+        const bool live = offX && offY && GuestLoad32(g_controller + 0x24) == g_controllerClass && !testMouse;
+        MouseLookSetLive(live);
+        if (live)
+        {
+            float x, y;
+            MouseLookTake(x, y);
+            StoreFloat(g_controller + offX, x);
+            StoreFloat(g_controller + offY, y);
+        }
+    }
+    // SCDA_TRACE_ROT=1: per tick, the controller's Rotation (yaw/pitch, 65536 = 360 deg) and its input
+    // axes (issue #29: how the game turns stick deflection into view rotation).
+    static const bool traceRot = getenv("SCDA_TRACE_ROT") != nullptr;
+    if (traceRot)
+    {
+        static uint32_t cls = 0, rot = 0, turn = 0, baseX = 0, mouseX = 0, mouseY = 0, lookUp = 0;
+        if (cls != g_controllerClass)
+        {
+            cls = g_controllerClass;
+            rot = PropertyOffset(cls, "Rotation"), turn = PropertyOffset(cls, "aTurn"), baseX = PropertyOffset(cls, "aBaseX");
+            mouseX = PropertyOffset(cls, "aMouseX"), mouseY = PropertyOffset(cls, "aMouseY"), lookUp = PropertyOffset(cls, "aLookUp");
+            RuntimeLog("[rot] offsets Rotation +%X aTurn +%X aBaseX +%X aMouseX +%X aLookUp +%X\n", rot, turn, baseX, mouseX, lookUp);
+        }
+        auto f = [&](uint32_t o) { return o ? LoadFloat(g_controller + o) : 0.0f; };
+        // SCDA_TEST_MOUSEX=<v> / SCDA_TEST_YAW=<units>: write aMouseX / add to yaw every tick (does it stick?).
+        static const char* tmx = getenv("SCDA_TEST_MOUSEX");
+        static const char* tyaw = getenv("SCDA_TEST_YAW");
+        static int tick = 0;
+        tick++;
+        // SCDA_TEST_STALL=<every>:<ms>: sleep in the tick every N ticks (is the mouse scaled by DeltaTime?).
+        static int stallEvery = 0, stallMs = 0;
+        static const bool stallParsed = getenv("SCDA_TEST_STALL") && sscanf(getenv("SCDA_TEST_STALL"), "%d:%d", &stallEvery, &stallMs) == 2;
+        if (stallParsed && stallEvery > 0 && tick % stallEvery == 0)
+            Sleep(DWORD(stallMs));
+        if (tmx && mouseX && mouseY)
+        {
+            // <x>,<y>[,<on ticks>,<off ticks>]
+            float x = 0, y = 0;
+            int on = 1, off = 0;
+            sscanf(tmx, "%f,%f,%d,%d", &x, &y, &on, &off);
+            const bool active = off <= 0 || tick % (on + off) < on;
+            StoreFloat(g_controller + mouseX, active ? x : 0.0f);
+            StoreFloat(g_controller + mouseY, active ? y : 0.0f);
+        }
+        if (tyaw && rot)
+            GuestStore32(g_controller + rot + 4, GuestLoad32(g_controller + rot + 4) + uint32_t(atoi(tyaw)));
+        if (rot)
+            RuntimeLog("[rot] pitch %d yaw %d aTurn %g aBaseX %g aMouseX %g aMouseY %g aLookUp %g\n", int32_t(GuestLoad32(g_controller + rot)),
+                int32_t(GuestLoad32(g_controller + rot + 4)), f(turn), f(baseX), f(mouseX), f(mouseY), f(lookUp));
+    }
     static const char* test = getenv("SCDA_FOV_TEST");
     if (!test)
     {

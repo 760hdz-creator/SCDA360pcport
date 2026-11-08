@@ -89,6 +89,29 @@ void MouseToStick(int dx, int dy, float sensitivity, bool invertY, int16_t& rx, 
     ry = stick(invertY ? dy : -dy);
 }
 
+void MouseToLook(int dx, int dy, float sensitivity, bool invertY, float& aMouseX, float& aMouseY)
+{
+    aMouseX = float(dx) * sensitivity * kMouseUnitsPerCount / 40000.0f;
+    aMouseY = float(invertY ? -dy : dy) * sensitivity * kMouseUnitsPerCount / 25000.0f;
+}
+
+static std::atomic<uint64_t> g_lookLiveMs{ 0 };
+static std::mutex g_lookLock;
+static float g_lookX = 0, g_lookY = 0;
+void MouseLookSetLive(bool live) { g_lookLiveMs = live ? GetTickCount64() : 0; }
+bool MouseLookLive() { const uint64_t t = g_lookLiveMs; return t && GetTickCount64() - t < 500; }
+void MouseLookAdd(float x, float y)
+{
+    std::lock_guard<std::mutex> lock(g_lookLock);
+    g_lookX += x, g_lookY += y;
+}
+void MouseLookTake(float& x, float& y)
+{
+    std::lock_guard<std::mutex> lock(g_lookLock);
+    x = g_lookX, y = g_lookY;
+    g_lookX = g_lookY = 0;
+}
+
 bool StickIdle(int16_t x, int16_t y, int deadzone)
 {
     return int64_t(x) * x + int64_t(y) * y <= int64_t(deadzone) * deadzone;
@@ -273,7 +296,14 @@ SCDA_IMPORT(XamInputGetState)
         if (!connected || StickIdle(g.sThumbRX, g.sThumbRY, XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE))
         {
             int16_t rx = 0, ry = 0;
-            if (mouse.mouseLook)
+            static const bool forceStick = getenv("SCDA_MOUSE_STICK") != nullptr; // A/B: old mapping
+            if (mouse.mouseLook && mouse.mouseDirect && MouseLookLive() && !InputBlocked() && !forceStick)
+            {
+                float ax, ay;
+                MouseToLook(dx, dy, mouse.mouseSensitivity, mouse.mouseInvertY, ax, ay);
+                MouseLookAdd(ax, ay);
+            }
+            else if (mouse.mouseLook)
                 MouseToStick(dx, dy, mouse.mouseSensitivity, mouse.mouseInvertY, rx, ry);
             g.sThumbRX = rx ? rx : k.sThumbRX;
             g.sThumbRY = ry ? ry : k.sThumbRY;

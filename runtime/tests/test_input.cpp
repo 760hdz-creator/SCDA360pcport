@@ -1,4 +1,5 @@
 #include "check.h"
+#include <cmath>
 #include "guest_memory.h"
 #include <cstring>
 #include <filesystem>
@@ -71,6 +72,32 @@ TEST(mouse_motion_maps_to_right_stick)
     CHECK(dx == 5 && dy == -4 && wheel == 1);
     MouseTake(dx, dy, wheel);
     CHECK(dx == 0 && dy == 0 && wheel == 0);
+}
+
+// Direct mouse look (#29): counts -> aMouseX/aMouseY, linear from the first count (no dead zone),
+// equal degrees per count on both axes, down = positive aMouseY unless inverted.
+TEST(mouse_motion_maps_to_look_axes)
+{
+    float x, y;
+    MouseToLook(1, 0, 1.0f, false, x, y);
+    CHECK(x > 0 && y == 0);
+    CHECK(std::fabs(x * 40000.0f - kMouseUnitsPerCount) < 1e-3f); // one count turns kMouseUnitsPerCount units
+    float x2, y2;
+    MouseToLook(100, 10, 2.0f, false, x2, y2);
+    CHECK(std::fabs(x2 - 200.0f * x) < 1e-5f);
+    CHECK(y2 > 0 && std::fabs(y2 * 25000.0f - x * 40000.0f * 20.0f) < 1e-2f);
+    MouseToLook(0, 10, 1.0f, true, x2, y2);
+    CHECK(y2 < 0);
+    MouseLookAdd(0.25f, -0.5f);
+    MouseLookAdd(0.25f, 0.0f);
+    MouseLookTake(x, y);
+    CHECK(x == 0.5f && y == -0.5f);
+    MouseLookTake(x, y);
+    CHECK(x == 0.0f && y == 0.0f);
+    MouseLookSetLive(true);
+    CHECK(MouseLookLive());
+    MouseLookSetLive(false);
+    CHECK(!MouseLookLive());
 }
 
 // A connected pad's resting drift must not lock out the keyboard and mouse.
