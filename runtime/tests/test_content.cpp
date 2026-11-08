@@ -140,6 +140,31 @@ TEST(content_create_always_truncates_and_overlapped_completes)
     CloseContent("save");
 }
 
+// Issue #24: the title lists only the first MaxItems saves, so the newest must come first (not name order).
+TEST(content_enumerate_newest_first)
+{
+    TestGuestBase();
+    auto dir = FreshContentDir();
+    const char* names[] = { "CCC", "BBB", "AAA" }; // oldest .. newest, reverse of name order
+    const auto now = std::filesystem::file_time_type::clock::now();
+    for (int i = 0; i < 3; i++)
+    {
+        auto item = dir / "00000001" / names[i];
+        std::filesystem::create_directories(item);
+        const auto file = item / "slot.sav";
+        fclose(fopen(file.string().c_str(), "wb"));
+        const auto t = now - std::chrono::hours(3 - i);
+        std::filesystem::last_write_time(file, t);
+        std::filesystem::last_write_time(item, t);
+    }
+    // An older folder whose save file was rewritten just now counts as newest.
+    std::filesystem::last_write_time(dir / "00000001" / "CCC" / "slot.sav", now);
+    CHECK_EQ(EnumerateSaves(4), 3);
+    const char* expected[] = { "CCC", "AAA", "BBB" };
+    for (uint32_t i = 0; i < 3; i++)
+        CHECK_EQ(std::string((const char*)GuestPtr(kBuffer + i * 0x134 + 0x108)), std::string(expected[i]));
+}
+
 TEST(content_device_is_one_hard_drive)
 {
     TestGuestBase();

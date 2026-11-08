@@ -5,6 +5,8 @@
 // XCONTENT_DATA: DeviceID @0, ContentType @4, wchar DisplayName[128] @8 (BE), char FileName[42]
 // @0x108; 0x134 bytes. XDEVICE_DATA: DeviceID @0, DeviceType @4, u64 total @8, u64 free @0x10,
 // wchar Name[27] @0x18; 0x50 bytes.
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -157,7 +159,9 @@ SCDA_IMPORT(XamContentGetCreator)
 SCDA_IMPORT(XamContentCreateEnumerator)
 {
     const uint32_t device = ctx.r4.u32, type = ctx.r5.u32, maxItems = ctx.r7.u32;
-    std::vector<uint8_t> items;
+    // Newest first (issue #24): the title shows only the first MaxItems (100 saves), and folder names are
+    // hashes, so name order hid recent saves once there were more than 100.
+    std::vector<std::pair<fs::file_time_type, std::array<uint8_t, kContentDataSize>>> found;
     std::error_code ec;
     if (device == 0 || device == kDeviceHdd)
         for (const auto& entry : fs::directory_iterator(TypeDir(type), ec))
@@ -180,9 +184,17 @@ SCDA_IMPORT(XamContentCreateEnumerator)
             memcpy(record, be, 8);
             memset(record + kFileNameOffset, 0, kFileNameMax);
             memcpy(record + kFileNameOffset, name.data(), name.size());
-            items.insert(items.end(), record, record + kContentDataSize);
+            fs::file_time_type newest = entry.last_write_time(ec);
+            for (const auto& file : fs::directory_iterator(entry.path(), ec))
+                newest = std::max(newest, file.last_write_time(ec));
+            auto& item = found.emplace_back(newest, std::array<uint8_t, kContentDataSize>{});
+            memcpy(item.second.data(), record, kContentDataSize);
         }
-    RuntimeLog("[content] enumerate device %u type %X -> %zu items\n", device, type, items.size() / kContentDataSize);
+    std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<uint8_t> items;
+    for (const auto& [time, record] : found)
+        items.insert(items.end(), record.begin(), record.end());
+    RuntimeLog("[content] enumerate device %u type %X max %u -> %zu items\n", device, type, maxItems, found.size());
     if (ctx.r8.u32)
         GuestStore32(ctx.r8.u32, kContentDataSize * maxItems);
     GuestStore32(ctx.r9.u32, XamCreateItemEnumerator(std::move(items), kContentDataSize, maxItems));
