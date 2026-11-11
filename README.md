@@ -8,7 +8,7 @@
 
 [![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest)
 
-![status](https://img.shields.io/badge/status-playable%2C%20visual%20bugs%20known-yellowgreen)
+![status](https://img.shields.io/badge/status-playable-brightgreen)
 [![Report a bug](https://img.shields.io/badge/report-a%20bug-red?logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues)
 [![Ideas](https://img.shields.io/badge/share-ideas-blueviolet?logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues/new?issue[title]=Idea:%20)
 ![platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
