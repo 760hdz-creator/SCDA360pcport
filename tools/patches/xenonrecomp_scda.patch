@@ -15,10 +15,20 @@ index 34add40..df946cc 100644
                      {
                          // right block's just going to return
 diff --git a/XenonRecomp/recompiler.cpp b/XenonRecomp/recompiler.cpp
-index fa91527..e1f3ac7 100644
+index fa91527..894b401 100644
 --- a/XenonRecomp/recompiler.cpp
 +++ b/XenonRecomp/recompiler.cpp
-@@ -1769,6 +1769,7 @@ bool Recompiler::Recompile(
+@@ -609,7 +609,8 @@ bool Recompiler::Recompile(
+     case PPC_INST_BCTR:
+         if (switchTable != config.switchTables.end())
+         {
+-            println("\tswitch ({}.u64) {{", r(switchTable->second.r));
++            // Guest bounds checks are 32-bit (cmplwi); the upper half can hold a carry (lwz -1 then addi 1).
++            println("\tswitch ({}.u32) {{", r(switchTable->second.r));
+ 
+             for (size_t i = 0; i < switchTable->second.labels.size(); i++)
+             {
+@@ -1769,6 +1770,7 @@ bool Recompiler::Recompile(
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
          break;
  
@@ -26,7 +36,7 @@ index fa91527..e1f3ac7 100644
      case PPC_INST_VANDC128:
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[2]), v(insn.operands[1]));
          break;
-@@ -1877,6 +1878,8 @@ bool Recompiler::Recompile(
+@@ -1877,6 +1879,8 @@ bool Recompiler::Recompile(
  
      case PPC_INST_VCMPGTUH:
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_cmpgt_epu16(simde_mm_load_si128((simde__m128i*){}.u16), simde_mm_load_si128((simde__m128i*){}.u16)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
@@ -35,7 +45,7 @@ index fa91527..e1f3ac7 100644
          break;
  
      case PPC_INST_VEXPTEFP:
-@@ -2088,6 +2091,7 @@ bool Recompiler::Recompile(
+@@ -2088,6 +2092,7 @@ bool Recompiler::Recompile(
          break;
  
      case PPC_INST_VSEL:
@@ -43,7 +53,7 @@ index fa91527..e1f3ac7 100644
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_or_si128(simde_mm_andnot_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)), simde_mm_and_si128(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8))));", v(insn.operands[0]), v(insn.operands[3]), v(insn.operands[1]), v(insn.operands[3]), v(insn.operands[2]));
          break;
  
-@@ -2186,6 +2190,180 @@ bool Recompiler::Recompile(
+@@ -2186,6 +2191,180 @@ bool Recompiler::Recompile(
          println("\tsimde_mm_store_si128((simde__m128i*){}.u8, simde_mm_sub_epi16(simde_mm_load_si128((simde__m128i*){}.u8), simde_mm_load_si128((simde__m128i*){}.u8)));", v(insn.operands[0]), v(insn.operands[1]), v(insn.operands[2]));
          break;
  
