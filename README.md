@@ -19,6 +19,9 @@
 </div>
 
 > [!NOTE]
+> **Antivirus and "Windows protected your PC" warnings.** `SCDA_Setup.exe` is not code-signed (signing certificates cost money), so Windows SmartScreen and some antivirus programs may warn about it or flag it on heuristics. These are false positives: I can assure you nothing in it is malicious. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**. All of the source code is right here in this repo, so if that would make you feel more comfortable, you're always welcome to [build it yourself](#building-it-yourself). Thanks for giving it a try!
+
+> [!NOTE]
 > **You can play the whole game.** Every mission loads, plays and saves, and missions lead into each other like on
 > the console. The installer is out: get `SCDA_Setup.exe` from the
 > [latest release](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/releases/latest).
@@ -189,9 +192,6 @@ Roughly in this order:
 2. Run `SCDA_Setup.exe`, pick your disc image (`.iso`) and a folder to install to. It checks that your disc is the
    right one and copies the game files into `<folder>\game`.
 3. Start `scda.exe` from that folder.
-
-> [!NOTE]
-> **Antivirus and "Windows protected your PC" warnings.** `SCDA_Setup.exe` is not code-signed (signing certificates cost money), so Windows SmartScreen and some antivirus programs may warn about it or flag it on heuristics. These are false positives: I can assure you nothing in it is malicious. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**. Every release is built from the source code in this repo, so if you would rather not trust the download, you can [build it yourself](#building-it-yourself).
 
 **Extra Settings menu.** Open it from the game's own **OPTIONS > EXTRA SETTINGS** (it replaces TV calibration;
 brightness and contrast stay on the OPTIONS page), or any time with **F1** or **L3+R3**. It has three tabs:
