@@ -190,6 +190,9 @@ Roughly in this order:
    right one and copies the game files into `<folder>\game`.
 3. Start `scda.exe` from that folder.
 
+> [!NOTE]
+> **Antivirus and "Windows protected your PC" warnings.** `SCDA_Setup.exe` is not code-signed (signing certificates cost money), so Windows SmartScreen and some antivirus programs may warn about it or flag it on heuristics. These are false positives: I can assure you nothing in it is malicious. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**. Every release is built from the source code in this repo, so if you would rather not trust the download, you can [build it yourself](#building-it-yourself).
+
 **Extra Settings menu.** Open it from the game's own **OPTIONS > EXTRA SETTINGS** (it replaces TV calibration;
 brightness and contrast stay on the OPTIONS page), or any time with **F1** or **L3+R3**. It has three tabs:
 
