@@ -6,11 +6,12 @@
 
 **Splinter Cell: Double Agent (Xbox 360) running natively on Windows. No emulator.**
 
-[![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest)
+[![Download the latest release](https://img.shields.io/badge/Download-latest%20release-2ea44f?style=for-the-badge&logo=forgejo)](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/releases/latest)
+<a href="https://git.8gramlabs.com/8gramlabs/SCDA360pcport/releases/latest"><img src="https://git.8gramlabs.com/badge/8gramlabs/SCDA360pcport/downloads.svg" alt="Downloads"></a>
 
 ![status](https://img.shields.io/badge/status-playable-brightgreen)
-[![Report a bug](https://img.shields.io/badge/report-a%20bug-red?logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues)
-[![Ideas](https://img.shields.io/badge/share-ideas-blueviolet?logo=gitlab)](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues/new?issue[title]=Idea:%20)
+[![Report a bug](https://img.shields.io/badge/report-a%20bug-red?logo=forgejo)](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/issues)
+[![Ideas](https://img.shields.io/badge/share-ideas-blueviolet?logo=forgejo)](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/issues/new?title=Idea:%20)
 ![platform](https://img.shields.io/badge/platform-Windows%20x64-blue)
 ![renderer](https://img.shields.io/badge/renderer-Direct3D%2011-informational)
 ![license](https://img.shields.io/badge/license-GPL--3.0-green)
@@ -20,7 +21,7 @@
 > [!NOTE]
 > **You can play the whole game.** Every mission loads, plays and saves, and missions lead into each other like on
 > the console. The installer is out: get `SCDA_Setup.exe` from the
-> [latest release](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest).
+> [latest release](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/releases/latest).
 
 > [!WARNING]
 > **This build still has visual bugs.** I fix as many as I can, but fixing one sometimes brings out a new one. The
@@ -155,7 +156,7 @@ Taken from the current build (November 2026) on Windows at `Scale=2` (2560x1440)
 
 ## Reporting bugs
 
-Open an [issue](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues) and include:
+Open an [issue](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/issues) and include:
 
 - **Screenshots or a short video** of the bug.
 - **Where it happened**: the mission and the area.
@@ -165,8 +166,8 @@ Open an [issue](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues) a
 
 ## Ideas
 
-Have an idea or a feature you'd like to see? Open an [issue](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues/new) starting the title with "Idea:".
-Bugs go in [Issues](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/issues) too (see above).
+Have an idea or a feature you'd like to see? Open an [issue](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/issues/new) starting the title with "Idea:".
+Bugs go in [Issues](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/issues) too (see above).
 
 ## Coming next
 
@@ -181,7 +182,7 @@ Roughly in this order:
 > **No game files come with this project.** You need your own copy of *Splinter Cell: Double Agent* for Xbox 360.
 > It's made for the **USA, Europe** disc (as an `.iso` file). Other versions won't work.
 
-1. Download `SCDA_Setup.exe` from the [latest release](https://gitlab.com/octagram-labs-group/SCDA360pcport/-/releases/permalink/latest)
+1. Download `SCDA_Setup.exe` from the [latest release](https://git.8gramlabs.com/8gramlabs/SCDA360pcport/releases/latest)
    (or build it yourself, see below).
    The installer isn't code-signed, so Windows or your antivirus may warn about it. If Windows says "Windows
    protected your PC", click **More info**, then **Run anyway**.
