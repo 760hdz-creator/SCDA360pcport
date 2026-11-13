@@ -275,6 +275,7 @@ static void ResetForRelaunch()
     g_shadow.Clear();
     g_pendingWrites.clear();
     memset(g_constLogged, 0, sizeof(g_constLogged));
+    g_earlyFenceAddress = 0; // the relaunched title's fence block is captured again
     g_pendingWrites.push_back({ kRegClearAll, 0 });
     for (auto& w : g_stalledWait)
         w = 0;

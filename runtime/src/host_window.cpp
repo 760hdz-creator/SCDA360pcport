@@ -332,6 +332,7 @@ static void RenderThread(DisplaySettings s)
         busyFrames++;
         static uint64_t presents = 0;
         static const ULONGLONG startTick = GetTickCount64();
+        static const LARGE_INTEGER startQpc = t1; // [present] t: QPC (GetTickCount64 steps 10-16 ms)
         presents++;
         // SCDA_TRACE_PRESENT=1: one line per present (frame, draws, frontbuffer address, fallback).
         static const bool tracePresent = getenv("SCDA_TRACE_PRESENT") != nullptr;
@@ -339,7 +340,7 @@ static void RenderThread(DisplaySettings s)
             RuntimeLog("[present] %llu draws %u drawn %u skipped %u resolves %u fb %08X %s render %.2f t %.3f\n", (unsigned long long)frame.stats.frame, frame.stats.draws,
                 renderer.LastDrawn(), renderer.LastSkipped(), frame.stats.resolves, frame.frontbuffer,
                 renderer.LastPresentedFrontbuffer() ? "frontbuffer" : "target", 1000.0 * double(presentTicks) / double(qpf.QuadPart),
-                (GetTickCount64() - startTick) / 1000.0);
+                double(t1.QuadPart - startQpc.QuadPart) / double(qpf.QuadPart));
         presentTicks = 0;
         if (dumping || tracing)
         {

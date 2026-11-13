@@ -1,6 +1,7 @@
 // Frames handed from the command processor (producer) to the renderer (consumer).
 // Bounded: when the renderer falls behind the oldest frame is dropped; the CP never blocks.
 #pragma once
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -121,6 +122,7 @@ class FrameQueue
 {
 public:
     static constexpr size_t kMaxDrawsPerFrame = 65536;
+    static constexpr size_t kBackPressureDepth = 1; // EndFrame: queued Frames before the CP waits
 
     explicit FrameQueue(size_t maxFrames = 3) : m_max(maxFrames ? maxFrames : 1) {}
 
@@ -298,11 +300,14 @@ public:
         // when the renderer is slower, and a full queue dropped frames (wasted CP work, uneven pacing).
         // The CP waits here for the renderer instead, like a 360 whose GPU is behind; bounded so a
         // renderer that stops taking frames cannot hang the title. SCDA_NO_BACKPRESSURE=1 = old (drop).
+        // SCDA_QUEUE_DEPTH=<n> (1..m_max): wait while n Frames are queued (default kBackPressureDepth: the
+        // title runs at most that far ahead of the renderer, which bounds input latency).
         static const bool noBackPressure = getenv("SCDA_NO_BACKPRESSURE") != nullptr;
-        if (!noBackPressure && m_done.size() >= m_max)
+        static const size_t depth = std::clamp<size_t>(getenv("SCDA_QUEUE_DEPTH") ? size_t(atoi(getenv("SCDA_QUEUE_DEPTH"))) : kBackPressureDepth, 1, m_max);
+        if (!noBackPressure && m_done.size() >= depth)
         {
             TimelineEvent('B', uint32_t(m_done.size()));
-            m_popped.wait_for(lock, std::chrono::milliseconds(200), [&] { return m_done.size() < m_max; });
+            m_popped.wait_for(lock, std::chrono::milliseconds(200), [&] { return m_done.size() < depth; });
             TimelineEvent('b', uint32_t(m_done.size()));
         }
         TimelineEvent('E', uint32_t(m_open.draws.size()));
