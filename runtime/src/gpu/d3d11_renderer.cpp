@@ -1356,7 +1356,8 @@ void D3D11Renderer::UploadAluSlice(uint32_t stage, uint32_t lo, uint32_t hi)
     const UINT bytes = (hi - lo) * 16, front = lo * 16;
     UINT at = std::max(r.cbRingOffset, front); // window = at - front, must not start below 0
     D3D11_MAP type = D3D11_MAP_WRITE_NO_OVERWRITE;
-    if (at - front + kWindow > kCbRingBytes)
+    const bool wrap = at - front + kWindow > kCbRingBytes;
+    if (wrap)
     {
         type = D3D11_MAP_WRITE_DISCARD;
         at = front;
@@ -1376,6 +1377,16 @@ void D3D11Renderer::UploadAluSlice(uint32_t stage, uint32_t lo, uint32_t hi)
     r.aluHi[stage] = hi;
     r.aluDirty[stage] = false;
     g_cbStats.aluUploads[stage]++;
+    // DISCARD gave the ring new contents: the other stage's window, still bound and marked valid,
+    // now reads undefined bytes (flat or garbage draws until its constants changed again). Re-write
+    // its band from the current registers; the ring was just emptied, so this call cannot wrap.
+    const uint32_t other = stage ^ 1;
+    if (wrap && r.aluHi[other])
+    {
+        const uint32_t otherLo = r.aluLo[other], otherHi = r.aluHi[other];
+        r.aluHi[other] = 0;
+        UploadAluSlice(other, otherLo, otherHi);
+    }
 }
 
 void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlots)
