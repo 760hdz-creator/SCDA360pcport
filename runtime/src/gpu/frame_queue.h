@@ -3,6 +3,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -73,8 +74,19 @@ struct Fence
     uint32_t value = 0;
 };
 
+// Issue #26: guest physical address of D3D's allocator fence word (fence block + 4), or 0 until the
+// title first waits on it (wait_trace.cpp sub_821F33A8). Only that wait reads it: the title blocks
+// there until the GPU has passed a position in its dynamic-data ring before reusing it. Everything
+// the renderer needs from that data is copied at parse time (vertex/index snapshots, constants), so
+// the CP writes this word when it parses the fence (command_processor.cpp kOpEventWriteShd) and the
+// title builds the next frame while the renderer draws this one. The other fence words (+0, read by
+// the query/precache waits) stay with the renderer. SCDA_NO_EARLY_FENCES=1 = old (all deferred).
+inline std::atomic<uint32_t> g_earlyFenceAddress{ 0 };
+
 inline void WriteFence(const Fence& f)
 {
+    if (f.physical == g_earlyFenceAddress) // queued before the address was known: the CP wrote a newer value
+        return;
     TimelineEvent('F', f.physical, f.value);
     *reinterpret_cast<uint32_t*>(GuestPtr(f.physical)) = f.value;
 }
@@ -281,7 +293,18 @@ public:
     void EndFrame(uint32_t frontbuffer = 0)
     {
         std::vector<Persisted> expired; // freed after the lock is released
-        std::lock_guard lock(m_mutex);
+        std::unique_lock lock(m_mutex);
+        // Issue #26: with early allocator fences (g_earlyFenceAddress) nothing else holds the title back
+        // when the renderer is slower, and a full queue dropped frames (wasted CP work, uneven pacing).
+        // The CP waits here for the renderer instead, like a 360 whose GPU is behind; bounded so a
+        // renderer that stops taking frames cannot hang the title. SCDA_NO_BACKPRESSURE=1 = old (drop).
+        static const bool noBackPressure = getenv("SCDA_NO_BACKPRESSURE") != nullptr;
+        if (!noBackPressure && m_done.size() >= m_max)
+        {
+            TimelineEvent('B', uint32_t(m_done.size()));
+            m_popped.wait_for(lock, std::chrono::milliseconds(200), [&] { return m_done.size() < m_max; });
+            TimelineEvent('b', uint32_t(m_done.size()));
+        }
         TimelineEvent('E', uint32_t(m_open.draws.size()));
         m_open.frontbuffer = frontbuffer;
         m_open.stats.draws = uint32_t(m_open.draws.size()) + m_partialDraws;
@@ -343,6 +366,7 @@ public:
             return false;
         out = std::move(m_done.front());
         m_done.pop_front();
+        m_popped.notify_all();
         return true;
     }
     // Frames closed so far: the next frame's FrameStats::frame (SCDA_DUMP_FRAME / SCDA_AUTOPRESS clock).
@@ -463,6 +487,7 @@ private:
     }
 
     mutable std::mutex m_mutex;
+    std::condition_variable m_popped; // PopFrame -> EndFrame back-pressure
     size_t m_max;
     Frame m_open;
     struct Latest

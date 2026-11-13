@@ -124,7 +124,30 @@ static void SetGpuRegister(uint32_t index, uint32_t v)
 // dwords per frame). Reads contiguous payloads straight from memory instead of per-dword calls.
 static void SetRegisterRun(uint32_t base, const Pm4Payload& p, uint32_t first, uint32_t n)
 {
-    if (const uint32_t* raw = p.Raw())
+    // Issue #26: runs inside the constant registers (0x4000-0x4FFF, ~300k writes per frame) take the
+    // same steps as SetGpuRegister minus the display/scratch checks, which never apply there. The
+    // guest copy stays big-endian, so it is one memcpy of the payload.
+    static const bool noConstRun = getenv("SCDA_NO_CONST_RUN") != nullptr;
+    const uint32_t* raw = p.Raw();
+    if (raw && !noConstRun && base >= kRegAluConstants && base + n <= kRegAluConstants + 0x1000)
+    {
+        memcpy(g_base + kGpuRegBase + base * 4, raw + first, n * 4);
+        const uint32_t frame = Frames().HandOvers() + 1;
+        for (uint32_t i = 0; i < n; i++)
+        {
+            const uint32_t index = base + i, v = _byteswap_ulong(raw[first + i]), c = index - kRegAluConstants;
+            if (!g_noRegDedup)
+            {
+                if (g_shadow[index] == v && g_constLogged[c] == frame)
+                    continue;
+                g_constLogged[c] = frame;
+            }
+            g_shadow.Set(index, v);
+            g_pendingWrites.push_back({ index, v });
+        }
+        return;
+    }
+    if (raw)
         for (uint32_t i = 0; i < n; i++)
             SetGpuRegister(base + i, _byteswap_ulong(raw[first + i]));
     else
@@ -473,7 +496,7 @@ static bool ExecutePacket(uint32_t h, const Pm4Payload& p, int depth, CpStats& s
             if (seen.insert(p(1)).second)
                 RuntimeLog("[fence] addr %08X phys %08X value %08X initiator %08X\n", p(1), GuestPhysical(p(1) & ~3u), value, p(0));
         }
-        if (cpFences)
+        if (cpFences || GuestPhysical(p(1) & ~3u) == g_earlyFenceAddress)
             GpuStore(p(1), value);
         else
             Frames().AddFence(GuestPhysical(p(1) & ~3u), GpuSwap(value, p(1)));

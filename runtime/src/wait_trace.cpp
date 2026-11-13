@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <runtime.h>
 #include <gpu_wake.h>
+#include <gpu_state.h>
+#include <gpu/frame_queue.h>
 
 // Guest GPU waits (callers of the D3D spin-wait sub_821FA428), for SCDA_TIMELINE: one 'A' event at
 // return for waits over 100 us; a = function address, b = duration us.
@@ -22,7 +24,16 @@ static void TimedWait(PPCFunc* wait, uint32_t address, PPCContext& ctx, uint8_t*
         TimelineEvent('A', address, us);
 }
 
-PPC_FUNC(sub_821F33A8) { TimedWait(__imp__sub_821F33A8, 0x821F33A8, ctx, base); }
+// sub_821F33A8(device, position, generation) polls *(*(device + 10768) + 4) (frame_queue.h
+// g_earlyFenceAddress). 'a' event: a = position, b = generation.
+PPC_FUNC(sub_821F33A8)
+{
+    static const bool noEarly = getenv("SCDA_NO_EARLY_FENCES") != nullptr;
+    if (!noEarly && !g_earlyFenceAddress)
+        g_earlyFenceAddress = GuestPhysical(PPC_LOAD_U32(ctx.r3.u32 + 10768) + 4);
+    TimelineEvent('a', ctx.r4.u32, ctx.r5.u32);
+    TimedWait(__imp__sub_821F33A8, 0x821F33A8, ctx, base);
+}
 PPC_FUNC(sub_821F3440) { TimedWait(__imp__sub_821F3440, 0x821F3440, ctx, base); }
 PPC_FUNC(sub_821F4088) { TimedWait(__imp__sub_821F4088, 0x821F4088, ctx, base); }
 PPC_FUNC(sub_8220A638) { TimedWait(__imp__sub_8220A638, 0x8220A638, ctx, base); }
