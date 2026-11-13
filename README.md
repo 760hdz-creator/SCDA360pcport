@@ -255,7 +255,7 @@ AutoInstall=0
   digits, `F2`-`F12`, `Space Enter Escape Tab Backspace Shift Ctrl Alt CapsLock Up Down Left Right Insert Delete
   Home End PageUp PageDown Numpad0`-`Numpad9 Mouse1`-`Mouse5`. On-screen key icons still show the default keys.
 - `WalkSpeed` (0.1-1): how far the movement keys push the stick while `Walk` is held.
-- `WheelMoveSpeed=1`: in game, the mouse wheel sets how fast the movement keys move Sam (5 steps, wheel up =
+- `WheelMoveSpeed=1`: in game, the mouse wheel sets how fast the movement keys move Sam (4 steps, wheel up =
   faster), like the PC version. `0` = the wheel is d-pad up/down instead. In menus the wheel always scrolls.
 - Don't put comments on the same line as a setting.
 

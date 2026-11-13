@@ -16,7 +16,7 @@ XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk));
 // Issue #35: [Input] WheelMoveSpeed=1 (default): in gameplay the mouse wheel picks how far the movement
 // keys push the left stick (Sam's speed follows the stick, like the PC version's wheel). Levels
 // kWheelMoveLevels; wheel up = faster. Starts at full speed. Walk still scales it by WalkSpeed.
-constexpr float kWheelMoveLevels[] = { 0.3f, 0.475f, 0.65f, 0.825f, 1.0f };
+constexpr float kWheelMoveLevels[] = { 0.3f, 0.55f, 0.775f, 1.0f }; // 4 steps like the PC version (#35)
 int WheelMoveLevelStep(int level, int wheel); // clamps to the table
 void SetKeyboardMoveScale(float scale);       // KeyboardGamepad stick scale (1 = full)
 
