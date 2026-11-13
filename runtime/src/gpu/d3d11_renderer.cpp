@@ -341,6 +341,92 @@ void main(point V v[1], inout TriangleStream<V> s)
 }
 )HLSL";
 
+// Issue #28: triangles crossing the near plane (reversed z: z <= w) far from the screen centre.
+// The host clipper puts the new vertex at w ~ near, often ~1e7 pixels off-screen, and the depth
+// plane set up from it is off by hundreds of 24-bit units (Cozumel far-sea strip, 8-vertex octagon
+// of r = 80 km, fell below the sky dome's depth prepass -> sky wedges at the horizon). Clip here
+// against the near plane and a guard band |x|, |y| <= K w first, so the rasterizer never sees such
+// a vertex. The polygon is kept as barycentric weights of the input triangle; the zigzag strip
+// keeps its winding. Clip distances only clip per pixel on this GPU, so they cannot do this.
+static const char kNearClipGs[] = R"HLSL(
+struct V
+{
+    float4 pos : SV_Position;
+    float4 t[16] : TEXCOORD0;
+    float4 psize : POINTSIZE;
+    float4 clip0 : SV_ClipDistance0;
+    float2 clip1 : SV_ClipDistance1;
+};
+static const float K = 8.0;
+float Dist(float4 p, uint n)
+{
+    return n == 0 ? p.w * (1.0 - 1e-6) - p.z : n == 1 ? K * p.w - p.x : n == 2 ? K * p.w + p.x : n == 3 ? K * p.w - p.y : K * p.w + p.y;
+}
+V Lerp(V v[3], float3 b)
+{
+    V o;
+    o.pos = b.x * v[0].pos + b.y * v[1].pos + b.z * v[2].pos;
+    [unroll] for (int i = 0; i < 16; i++)
+        o.t[i] = b.x * v[0].t[i] + b.y * v[1].t[i] + b.z * v[2].t[i];
+    o.psize = v[0].psize;
+    o.clip0 = b.x * v[0].clip0 + b.y * v[1].clip0 + b.z * v[2].clip0;
+    o.clip1 = b.x * v[0].clip1 + b.y * v[1].clip1 + b.z * v[2].clip1;
+    return o;
+}
+[maxvertexcount(8)]
+void main(triangle V v[3], inout TriangleStream<V> s)
+{
+    uint outside = 0, any = 0;
+    [unroll] for (uint n = 0; n < 5; n++)
+    {
+        uint m = (Dist(v[0].pos, n) < 0 ? 1 : 0) | (Dist(v[1].pos, n) < 0 ? 2 : 0) | (Dist(v[2].pos, n) < 0 ? 4 : 0);
+        if (m == 7)
+            return; // all outside one plane: nothing visible
+        any |= m;
+    }
+    if (!any)
+    {
+        s.Append(v[0]); s.Append(v[1]); s.Append(v[2]);
+        return;
+    }
+    float3 poly[8], next[8];
+    [unroll] for (uint z = 0; z < 8; z++)
+        poly[z] = next[z] = 0;
+    poly[0] = float3(1, 0, 0); poly[1] = float3(0, 1, 0); poly[2] = float3(0, 0, 1);
+    uint count = 3;
+    [unroll] for (uint p = 0; p < 5; p++)
+    {
+        uint k = 0;
+        [loop] for (uint i = 0; i < count; i++)
+        {
+            float3 a = poly[i], b = poly[(i + 1) % count];
+            float4 pa = a.x * v[0].pos + a.y * v[1].pos + a.z * v[2].pos;
+            float4 pb = b.x * v[0].pos + b.y * v[1].pos + b.z * v[2].pos;
+            float da = Dist(pa, p), db = Dist(pb, p);
+            if (da >= 0 && k < 8)
+                next[k++] = a;
+            if ((da >= 0) != (db >= 0) && k < 8)
+                next[k++] = lerp(a, b, da / (da - db));
+        }
+        count = k;
+        [loop] for (uint j = 0; j < count; j++)
+            poly[j] = next[j];
+        if (count < 3)
+            return;
+    }
+    // Zigzag strip v0, v1, vN-1, v2, vN-2, ... (same winding as the input triangle).
+    uint lo = 1, hi = count - 1;
+    s.Append(Lerp(v, poly[0]));
+    [loop] for (uint e = 1; e < count; e++)
+    {
+        if (e & 1)
+            s.Append(Lerp(v, poly[lo++]));
+        else
+            s.Append(Lerp(v, poly[hi--]));
+    }
+}
+)HLSL";
+
 // Host render target for one EDRAM colour surface (EdramColorKey).
 struct ColorTarget
 {
@@ -392,6 +478,7 @@ struct DrawResources
     float gammaRampGamma = 1.0f, gammaRampBrightness = 1.0f; // PostFx calibration baked into the LUT
     ComPtr<ID3D11GeometryShader> rectListGs;
     ComPtr<ID3D11GeometryShader> pointListGs;
+    ComPtr<ID3D11GeometryShader> nearClipGs; // kNearClipGs
     ComPtr<ID3D11PixelShader> zeroPs; // aliased depth-only clears: returns 1 (x blend factor), never kills
     ComPtr<ID3D11ComputeShader> saturateCs;
     ComPtr<ID3D11Buffer> saturateRect;
@@ -631,6 +718,9 @@ bool D3D11Renderer::CreateDrawResources()
     auto pgs = CompileHlsl(kPointListGs, "gs_5_0", &error);
     if (pgs.empty() || FAILED(m_device->CreateGeometryShader(pgs.data(), pgs.size(), nullptr, &r->pointListGs)))
         printf("[d3d11] point list shader: %s\n", error.c_str()); // point lists are then skipped
+    auto ngs = CompileHlsl(kNearClipGs, "gs_5_0", &error);
+    if (ngs.empty() || FAILED(m_device->CreateGeometryShader(ngs.data(), ngs.size(), nullptr, &r->nearClipGs)))
+        printf("[d3d11] near clip shader: %s\n", error.c_str()); // host clipping only then
     {
         static const char kZeroPs[] = "void main(out float4 o0 : SV_Target0, out float4 o1 : SV_Target1, out float4 o2 : SV_Target2,"
              " out float4 o3 : SV_Target3) { o0 = o1 = o2 = o3 = 1.0; }";
@@ -2560,7 +2650,33 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
         if (!faceVs && !facePsHash) RuntimeLog("[face] present %llu draw %u vs %016llx: facing shader\n", m_presented, faceDrawIndex, (unsigned long long)d.vs->hash);
     }
-    m_context->GSSetShader(rectList ? r.rectListGs.Get() : pointList ? r.pointListGs.Get() : nullptr, nullptr, 0);
+    // Issue #28 near clip (kNearClipGs). shortcut: only the Cozumel far-sea plane VS (c5bd822f, 8-index
+    // strip, r = 80 km) by default. A generic filter (depth-tested triangle draws of <= 64 or <= 8
+    // indices, or strips only) caught 1500-3200 of ~9000 newyork_02 draws and cost ~1 fps there
+    // (render 17 -> 23-25 ms/frame). SCDA_NO_CLIP_GS=1: never; SCDA_CLIP_GS_ALL=1: generic filter with
+    // SCDA_CLIP_GS_MAX=<n> (default 64, 0 = any count); SCDA_TRACE_CLIP_GS=1 per-frame count.
+    constexpr uint64_t kFarSeaVs = 0xc5bd822fc44dbcdaull;
+    static const bool noClipGs = getenv("SCDA_NO_CLIP_GS") != nullptr;
+    static const bool clipGsAll = getenv("SCDA_CLIP_GS_ALL") != nullptr;
+    static const uint32_t clipGsMax = getenv("SCDA_CLIP_GS_MAX") ? uint32_t(strtoul(getenv("SCDA_CLIP_GS_MAX"), nullptr, 0)) : 64;
+    const bool nearClip = !noClipGs && r.nearClipGs && !rectList && !pointList && (topology == 4 || topology == 5) &&
+        (clipGsAll ? (r.regs[0x2200] & 2) && (!clipGsMax || d.indexCount <= clipGsMax) : d.vs->hash == kFarSeaVs);
+    static const bool traceClipGs = getenv("SCDA_TRACE_CLIP_GS") != nullptr;
+    if (traceClipGs)
+    {
+        static uint64_t frame = ~0ull;
+        static uint32_t clipped, total;
+        if (frame != m_presented)
+        {
+            if (frame != ~0ull && (frame % 100) == 0)
+                RuntimeLog("[clipgs] frame %llu %u of %u triangle draws\n", frame, clipped, total);
+            frame = m_presented;
+            clipped = total = 0;
+        }
+        total += topology == 4 || topology == 5;
+        clipped += nearClip;
+    }
+    m_context->GSSetShader(rectList ? r.rectListGs.Get() : pointList ? r.pointListGs.Get() : nearClip ? r.nearClipGs.Get() : nullptr, nullptr, 0);
     m_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY(topology));
     const bool expand = NeedsTriangleListExpansion(d.primType);
     // VGT_INDX_OFFSET (0x2102) applies to auto-generated indices too: JBA HQ draws its BSP polygons as
