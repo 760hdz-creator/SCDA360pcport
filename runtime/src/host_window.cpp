@@ -94,6 +94,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg)
     {
     case WM_SIZE:
+        if (wp == SIZE_MINIMIZED) // 0x0 client area: keep the swap chain at its last size
+            return 0;
         g_resizeH = HIWORD(lp);
         g_resizeW = LOWORD(lp);
         if (g_cursorHeld)
@@ -172,7 +174,8 @@ static void WindowThread(DisplaySettings s)
     }
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Splinter Cell: Double Agent Recomp", style, x, y,
         r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, nullptr);
-    ShowWindow(hwnd, SW_SHOW);
+    // SCDA_MINIMIZED=1: test runs start minimized without taking focus.
+    ShowWindow(hwnd, getenv("SCDA_MINIMIZED") ? SW_SHOWMINNOACTIVE : SW_SHOW);
     // Scripted runs (SCDA_AUTOPRESS) never take the mouse: an unattended window must not trap the cursor.
     g_mouseLook = LoadInputSettings(SettingsPath()).mouseLook && !getenv("SCDA_AUTOPRESS");
     if (g_mouseLook)

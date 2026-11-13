@@ -81,7 +81,10 @@ struct Fence
 // the renderer needs from that data is copied at parse time (vertex/index snapshots, constants), so
 // the CP writes this word when it parses the fence (command_processor.cpp kOpEventWriteShd) and the
 // title builds the next frame while the renderer draws this one. The other fence words (+0, read by
-// the query/precache waits) stay with the renderer. SCDA_NO_EARLY_FENCES=1 = old (all deferred).
+// the query/precache waits) stay with the renderer.
+// OFF by default since v0.1.19 (SCDA_EARLY_FENCES=1 = on): about 34 D3D paths load the fence block
+// pointer (device + 10768), not only that wait. With the word written early, a save load crashed at
+// sub_821BD930 (guest null + 12) and gameplay showed flicker (#26).
 inline std::atomic<uint32_t> g_earlyFenceAddress{ 0 };
 
 inline void WriteFence(const Fence& f)

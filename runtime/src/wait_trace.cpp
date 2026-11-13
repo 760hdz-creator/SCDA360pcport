@@ -28,8 +28,8 @@ static void TimedWait(PPCFunc* wait, uint32_t address, PPCContext& ctx, uint8_t*
 // g_earlyFenceAddress). 'a' event: a = position, b = generation.
 PPC_FUNC(sub_821F33A8)
 {
-    static const bool noEarly = getenv("SCDA_NO_EARLY_FENCES") != nullptr;
-    if (!noEarly && !g_earlyFenceAddress)
+    static const bool early = getenv("SCDA_EARLY_FENCES") != nullptr; // opt-in, see frame_queue.h
+    if (early && !g_earlyFenceAddress)
         g_earlyFenceAddress = GuestPhysical(PPC_LOAD_U32(ctx.r3.u32 + 10768) + 4);
     TimelineEvent('a', ctx.r4.u32, ctx.r5.u32);
     TimedWait(__imp__sub_821F33A8, 0x821F33A8, ctx, base);
