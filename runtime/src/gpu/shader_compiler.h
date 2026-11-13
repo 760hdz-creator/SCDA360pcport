@@ -24,6 +24,10 @@ void PrecompileShaders(const std::vector<const ShaderBlob*>& blobs, const std::f
 std::bitset<96> ShaderVertexFetchSlots(const ShaderBlob& blob);
 // Texture fetch constant slots (bit n = slot n) the shader samples (translated once per blob, cached).
 uint32_t ShaderTextureFetchSlots(const ShaderBlob& blob);
+// ALU constant registers [first, last) the shader reads (g_VSConstants / g_PSConstants), rounded out to
+// multiples of 16; [0, 256) when any read is relative (a0/aL). Translated once per blob, cached.
+std::pair<uint32_t, uint32_t> ShaderConstantRange(const ShaderBlob& blob);
+std::pair<uint32_t, uint32_t> ConstantRangeOfHlsl(const std::string& hlsl); // the scan (tests)
 
 // %LOCALAPPDATA%\SCDARecomp\shadercache (falls back to .\shadercache).
 std::filesystem::path DefaultShaderCacheDir();

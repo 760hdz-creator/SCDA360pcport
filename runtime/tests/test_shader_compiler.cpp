@@ -140,3 +140,14 @@ TEST(shader_sweep)
     printf("  shader sweep: %u compiled, %u failed\n", total, failed);
     CHECK_EQ(failed, 0u);
 }
+
+static uint32_t Band(std::pair<uint32_t, uint32_t> r) { return r.first * 1000 + r.second; }
+// Issue #26 constant ring: the band of ALU constants a translated shader reads.
+TEST(constant_range_of_hlsl)
+{
+    const std::string decl = "cbuffer P : register(b1) { float4 g_PSConstants[256]; };";
+    CHECK_EQ(Band(ConstantRangeOfHlsl(decl + " ps = g_PSConstants[255].x * g_PSConstants[241].y;")), 240256u);
+    CHECK_EQ(Band(ConstantRangeOfHlsl(decl + " r0 = g_VSConstants[3] + g_VSConstants[17];")), 32u);
+    CHECK_EQ(Band(ConstantRangeOfHlsl(decl + " r0 = g_VSConstants[12 + a0];")), 256u);
+    CHECK_EQ(Band(ConstantRangeOfHlsl(decl)), 16u);
+}

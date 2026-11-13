@@ -3,6 +3,7 @@
 #pragma once
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d11_1.h>
 #include <dxgi.h>
 #include <bitset>
 #include <functional>
@@ -93,6 +94,7 @@ private:
     void ExecuteFence(const Fence& f);
     void WritePendingFences();
     void BindRegisterState(const RegisterFile& regs, uint32_t texSlots);
+    void UploadAluSlice(uint32_t stage, uint32_t lo, uint32_t hi);
     void ApplyRegisterWrites(const Frame& frame, size_t end);
     void UploadVertexMemory(const DrawCall& d, const Frame& frame);
     void Blit(ID3D11ShaderResourceView* source);

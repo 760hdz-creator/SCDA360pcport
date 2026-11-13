@@ -239,6 +239,40 @@ uint32_t ShaderTextureFetchSlots(const ShaderBlob& blob)
     return it->second;
 }
 
+std::pair<uint32_t, uint32_t> ConstantRangeOfHlsl(const std::string& hlsl)
+{
+    uint32_t lo = 256, hi = 0;
+    for (const char* name : { "g_VSConstants[", "g_PSConstants[" })
+        for (size_t at = hlsl.find(name); at != std::string::npos; at = hlsl.find(name, at + 1))
+        {
+            const size_t open = at + strlen(name), close = hlsl.find(']', open);
+            if (close == std::string::npos)
+                return { 0, 256 };
+            const std::string index = hlsl.substr(open, close - open);
+            if (index.find_first_not_of("0123456789") != std::string::npos)
+                return { 0, 256 }; // relative (r + a0 / aL)
+            const uint32_t i = uint32_t(atoi(index.c_str()));
+            if (i >= 256)
+                continue; // the cbuffer declaration
+            lo = std::min(lo, i);
+            hi = std::max(hi, i + 1);
+        }
+    if (hi == 0)
+        return { 0, 16 };
+    return { lo / 16 * 16, (hi + 15) / 16 * 16 };
+}
+
+std::pair<uint32_t, uint32_t> ShaderConstantRange(const ShaderBlob& blob)
+{
+    static std::mutex mutex;
+    static std::unordered_map<uint64_t, std::pair<uint32_t, uint32_t>> ranges;
+    std::lock_guard lock(mutex);
+    auto it = ranges.find(blob.hash);
+    if (it == ranges.end())
+        it = ranges.emplace(blob.hash, ConstantRangeOfHlsl(TranslateShader(blob).hlsl)).first;
+    return it->second;
+}
+
 std::filesystem::path DefaultShaderCacheDir()
 {
     if (const char* base = getenv("LOCALAPPDATA"))

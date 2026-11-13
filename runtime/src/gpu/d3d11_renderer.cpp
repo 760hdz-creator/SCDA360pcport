@@ -352,6 +352,8 @@ struct ColorTarget
 };
 
 // Device objects for executing draws; rebuilt with the device.
+constexpr UINT kCbRingBytes = 8u << 20; // DrawResources::cbRing: ~17 MB of slices per frame on a 9000-draw scene
+
 struct DrawResources
 {
     // EDRAM surfaces, sample pitch x EdramSampleRows (x scale) each (EdramSurfaceLayout), kept across
@@ -396,6 +398,12 @@ struct DrawResources
     ComPtr<ID3D11RasterizerState> rasterizer;
     ComPtr<ID3D11SamplerState> sampler;
     ComPtr<ID3D11Buffer> constants[3]; // b0 VS, b1 PS, b2 shared
+    // Issue #26: b0/b1 are 256-constant windows into a dynamic ring (D3D11.1 constant buffer offsets);
+    // only the band the bound shader reads (ShaderConstantRange) is written. null = UpdateSubresource.
+    ComPtr<ID3D11Buffer> cbRing;
+    ComPtr<ID3D11DeviceContext1> context1;
+    UINT cbRingOffset = 0;                         // bytes written in the current ring generation
+    uint32_t aluLo[2] = { 0, 0 }, aluHi[2] = { 0, 0 }; // band of b0/b1 the bound window holds (hi 0 = none)
     ComPtr<ID3D11ShaderResourceView> white;
     // Raw view of guest physical memory from address 0 (t96); grown on demand.
     ComPtr<ID3D11Buffer> memory;
@@ -658,6 +666,16 @@ bool D3D11Renderer::CreateDrawResources()
         if (FAILED(m_device->CreateBuffer(&bd, nullptr, &r->constants[i])))
             return false;
     }
+    // SCDA_NO_CB_RING=1: whole b0/b1 uploads (old). Needs constant buffer offsetting (D3D11.1).
+    D3D11_FEATURE_DATA_D3D11_OPTIONS options{};
+    if (!getenv("SCDA_NO_CB_RING") && SUCCEEDED(m_context->QueryInterface(IID_PPV_ARGS(&r->context1))) &&
+        SUCCEEDED(m_device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof options)) && options.ConstantBufferOffsetting)
+    {
+        D3D11_BUFFER_DESC bd{ kCbRingBytes, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE };
+        if (FAILED(m_device->CreateBuffer(&bd, nullptr, &r->cbRing)))
+            r->cbRing.Reset();
+    }
+    RuntimeLog("[gpu] constant ring %s\n", r->cbRing ? "on" : "off");
 
     // Unsupported or unreadable textures sample opaque white.
     const uint32_t white = 0xFFFFFFFF;
@@ -1327,13 +1345,46 @@ static void AliasedClearColor(const RegisterFile& regs, float rgba[4], uint64_t 
         rgba[c] = float((dword >> (8 * c)) & 0xFF) / 255.0f;
 }
 
+// b0 (stage 0, VS) or b1 (PS): ALU constants [lo, hi) into fresh ring bytes, bound as a 256-constant
+// window that starts lo constants before them (the window's other bytes are older slices the shader
+// never reads). Replaces the 4 KB UpdateSubresource per stage per dirty draw (~35 MB per frame through
+// the driver on the Okhotsk snow save); most game shaders read c0-c15 and c240-c255 only.
+void D3D11Renderer::UploadAluSlice(uint32_t stage, uint32_t lo, uint32_t hi)
+{
+    DrawResources& r = *m_draw;
+    constexpr UINT kWindow = 256 * 16;
+    const UINT bytes = (hi - lo) * 16, front = lo * 16;
+    UINT at = std::max(r.cbRingOffset, front); // window = at - front, must not start below 0
+    D3D11_MAP type = D3D11_MAP_WRITE_NO_OVERWRITE;
+    if (at - front + kWindow > kCbRingBytes)
+    {
+        type = D3D11_MAP_WRITE_DISCARD;
+        at = front;
+    }
+    D3D11_MAPPED_SUBRESOURCE map;
+    if (FAILED(m_context->Map(r.cbRing.Get(), 0, type, 0, &map)))
+        return;
+    memcpy(static_cast<uint8_t*>(map.pData) + at, r.regs.Data() + kRegAluConstants + stage * 1024 + lo * 4, bytes);
+    m_context->Unmap(r.cbRing.Get(), 0);
+    const UINT first = (at - front) / 16, num = 256;
+    if (stage)
+        r.context1->PSSetConstantBuffers1(1, 1, r.cbRing.GetAddressOf(), &first, &num);
+    else
+        r.context1->VSSetConstantBuffers1(0, 1, r.cbRing.GetAddressOf(), &first, &num);
+    r.cbRingOffset = at + bytes;
+    r.aluLo[stage] = lo;
+    r.aluHi[stage] = hi;
+    r.aluDirty[stage] = false;
+    g_cbStats.aluUploads[stage]++;
+}
+
 void D3D11Renderer::BindRegisterState(const RegisterFile& regs, uint32_t texSlots)
 {
     DrawResources& r = *m_draw;
     for (uint32_t pixel = 0; pixel < 2; pixel++)
     {
         g_cbStats.aluBinds[pixel]++;
-        if (!r.aluDirty[pixel])
+        if (r.cbRing || !r.aluDirty[pixel]) // ring: UploadAluSlice per draw
             continue; // b0/b1 already hold these constants
         g_cbStats.aluUploads[pixel]++;
         // b0/b1 = ALU constants 0-1023 / 1024-2047, straight from the register file.
@@ -2319,6 +2370,13 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         r.lastTexSlots = r.stateDirty ? texSlots : r.lastTexSlots | texSlots;
         BindRegisterState(r.regs, r.lastTexSlots);
         r.stateDirty = false;
+    }
+    if (r.cbRing)
+    {
+        const std::pair<uint32_t, uint32_t> need[2] = { ShaderConstantRange(*d.vs), ShaderConstantRange(*d.ps) };
+        for (uint32_t stage = 0; stage < 2; stage++)
+            if (r.aluDirty[stage] || need[stage].first < r.aluLo[stage] || need[stage].second > r.aluHi[stage])
+                UploadAluSlice(stage, need[stage].first, need[stage].second);
     }
     // Okhotsk_02 surfacing (docs/remaining_bugs.md): the lens-drop pass (PS 7c17e516, additive into RT0
     // base 0 + RT1 base 0xB8) follows aliased depth-only clears of both, which AliasedClearColor makes
@@ -3322,6 +3380,7 @@ void D3D11Renderer::Present(const Frame& frame)
         m_context->VSSetConstantBuffers(0, 3, cbs);
         m_context->PSSetConstantBuffers(0, 3, cbs);
         m_context->GSSetConstantBuffers(0, 3, cbs); // pointListGs reads b2
+        r.aluHi[0] = r.aluHi[1] = 0; // b0/b1 are the whole buffers again: the next draw binds ring windows
         r.stateDirty = true;
         r.applied = 0;
         // Draws and resolves in stream order: resolve k runs before draw resolves[k].drawIndex.
