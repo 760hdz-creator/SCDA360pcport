@@ -117,8 +117,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
     case WM_MOUSEWHEEL:
-        MouseAccumulate(0, 0, GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA);
+    {
+        // Smooth-scroll mice and touchpads send deltas below WHEEL_DELTA: keep the remainder.
+        static int wheelRest = 0;
+        wheelRest += GET_WHEEL_DELTA_WPARAM(wp);
+        MouseAccumulate(0, 0, wheelRest / WHEEL_DELTA);
+        wheelRest %= WHEEL_DELTA;
         return 0;
+    }
     case WM_CLOSE:
         // Guest threads have no shutdown path: end the process.
         RuntimeLog("[window] closed by user\n");
