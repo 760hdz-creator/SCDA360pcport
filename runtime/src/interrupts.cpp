@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <vector>
@@ -78,7 +79,10 @@ static DWORD WINAPI InterruptThread(void*)
     LARGE_INTEGER freq, next, now;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&next);
-    const LONGLONG period = freq.QuadPart / 60;
+    // SCDA_VBLANK_HZ=<n> (benchmarks only): faster vblanks lift the title's 30 fps cap, so frame
+    // throughput (not the cap) is measured. Game timing is wrong with it.
+    static const LONGLONG hz = getenv("SCDA_VBLANK_HZ") ? std::clamp(atoll(getenv("SCDA_VBLANK_HZ")), 30LL, 1000LL) : 60;
+    const LONGLONG period = freq.QuadPart / hz;
     for (;;)
     {
         if (g_paused)
