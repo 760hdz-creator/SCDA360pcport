@@ -72,9 +72,9 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
     c.pointMinMax = r[0x2281];
     // PA_CL_CLIP_CNTL (0x2204): ucp_ena_0..5 in bits 0-5, all off with clip_disable (bit 16), as Xenia.
     // Planes PA_CL_UCP_0_X.. at 0x2388, 4 floats each. ucp_cull_only_ena (bit 17) is treated as clip.
-    // Off by default since 2026-11-02 (user asked to back the fog/ice-hole fix out while bugs are
-    // chased); SCDA_UCP=1 turns them on.
-    static const bool noUcp = getenv("SCDA_UCP") == nullptr;
+    // Off 2026-11-02..11-12 while the JBA HQ black floor was chased (that was polygon offset, 52456c4);
+    // back on for issue #36 (Okhotsk ice-hole water mirrored Sam's underwater legs). SCDA_NO_UCP=1 = off.
+    static const bool noUcp = getenv("SCDA_NO_UCP") != nullptr;
     c.ucpEnable = noUcp || ((r[0x2204] >> 16) & 1) ? 0 : r[0x2204] & 0x3F;
     for (uint32_t i = 0; i < 6; i++)
         for (uint32_t k = 0; k < 4; k++)
