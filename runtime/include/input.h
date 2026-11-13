@@ -13,6 +13,12 @@ void StoreInputState(uint32_t addr, uint32_t packet, const XINPUT_GAMEPAD& g);
 // arrows d-pad, WASD left stick, IJKL right stick, Z/right mouse LT, C/left mouse RT, 1/3 shoulders,
 // F left stick click, R/middle mouse right stick click (the keyboard prompts in prompts.cpp show these).
 XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk));
+// Issue #35: [Input] WheelMoveSpeed=1 (default): in gameplay the mouse wheel picks how far the movement
+// keys push the left stick (Sam's speed follows the stick, like the PC version's wheel). Levels
+// kWheelMoveLevels; wheel up = faster. Starts at full speed. Walk still scales it by WalkSpeed.
+constexpr float kWheelMoveLevels[] = { 0.3f, 0.475f, 0.65f, 0.825f, 1.0f };
+int WheelMoveLevelStep(int level, int wheel); // clamps to the table
+void SetKeyboardMoveScale(float scale);       // KeyboardGamepad stick scale (1 = full)
 
 // Mouse look. The window thread adds raw motion and wheel notches; each XamInputGetState poll
 // takes them (MouseTake zeroes the totals) and turns the motion into the right stick: full

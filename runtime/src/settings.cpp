@@ -60,6 +60,8 @@ InputSettings LoadInputSettings(const std::filesystem::path& ini)
             s.buttonPrompts = value;
         else if (key == "gamepad")
             s.gamepad = Truthy(value);
+        else if (key == "wheelmovespeed")
+            s.wheelMoveSpeed = Truthy(value);
         else if (key == "gamepadsensitivity" || key == "walkspeed")
         {
             const float v = float(atof(value.c_str()));

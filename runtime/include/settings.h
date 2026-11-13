@@ -56,6 +56,7 @@ struct InputSettings
     bool gamepad = true;              // [Input] Gamepad=0: ignore controllers (keyboard and mouse only)
     float gamepadSensitivity = 1.0f;  // [Input] GamepadSensitivity=0.25..3: right stick (camera) scale
     float walkSpeed = 0.5f;           // [Input] WalkSpeed=0.1..1: left stick deflection while [Keys] Walk is held
+    bool wheelMoveSpeed = true;       // [Input] WheelMoveSpeed=0: wheel is d-pad up/down in gameplay too (input.h)
 };
 
 struct UpdateSettings

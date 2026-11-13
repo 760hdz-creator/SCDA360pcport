@@ -32,6 +32,15 @@ void StoreInputState(uint32_t addr, uint32_t packet, const XINPUT_GAMEPAD& g)
     GuestStore16(addr + 14, uint16_t(g.sThumbRY));
 }
 
+static std::atomic<float> g_keyboardMoveScale{ 1.0f };
+void SetKeyboardMoveScale(float scale) { g_keyboardMoveScale = scale; }
+
+int WheelMoveLevelStep(int level, int wheel)
+{
+    const int last = int(std::size(kWheelMoveLevels)) - 1;
+    return std::clamp(level + wheel, 0, last);
+}
+
 XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
 {
     const KeyBindings& kb = CurrentKeyBindings();
@@ -55,7 +64,7 @@ XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
         if (held(b.action))
             g.wButtons |= b.button;
     // Walk (held): the movement keys deflect the left stick only to WalkSpeed (Sam's speed follows the stick).
-    const int16_t full = held(KeyAction::Walk) ? int16_t(32767.0f * kb.walkSpeed) : int16_t(32767);
+    const int16_t full = int16_t(32767.0f * g_keyboardMoveScale * (held(KeyAction::Walk) ? kb.walkSpeed : 1.0f));
     auto axis = [&](KeyAction neg, KeyAction pos, int16_t max) { return int16_t((held(pos) ? max : 0) - (held(neg) ? max : 0)); };
     g.sThumbLX = axis(KeyAction::MoveLeft, KeyAction::MoveRight, full);
     g.sThumbLY = axis(KeyAction::MoveBack, KeyAction::MoveForward, full);
@@ -308,7 +317,16 @@ SCDA_IMPORT(XamInputGetState)
             g.sThumbRX = rx ? rx : k.sThumbRX;
             g.sThumbRY = ry ? ry : k.sThumbRY;
         }
-        if (mouse.mouseLook && wheel)
+        // Issue #35: in gameplay (direct mouse path live) the wheel sets the keyboard move speed;
+        // elsewhere (menus) it scrolls with the d-pad.
+        if (mouse.mouseLook && wheel && mouse.wheelMoveSpeed && MouseLookLive())
+        {
+            static int level = int(std::size(kWheelMoveLevels)) - 1;
+            level = WheelMoveLevelStep(level, wheel);
+            SetKeyboardMoveScale(kWheelMoveLevels[level]);
+            RuntimeLog("[input] wheel move speed %d/%d\n", level + 1, int(std::size(kWheelMoveLevels)));
+        }
+        else if (mouse.mouseLook && wheel)
             g.wButtons |= wheel > 0 ? XINPUT_GAMEPAD_DPAD_UP : XINPUT_GAMEPAD_DPAD_DOWN;
     }
     PromptNoteInput(kind, padActive, keyboardActive);

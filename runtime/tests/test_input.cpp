@@ -51,6 +51,22 @@ TEST(keyboard_maps_to_gamepad)
     CHECK_EQ(g.sThumbLY, int16_t(0));
 }
 
+// Issue #35: wheel levels clamp; the move scale shrinks the keyboard's left stick.
+TEST(wheel_sets_keyboard_move_speed)
+{
+    const int last = int(std::size(kWheelMoveLevels)) - 1;
+    CHECK_EQ(WheelMoveLevelStep(last, 1), last);
+    CHECK_EQ(WheelMoveLevelStep(last, -1), last - 1);
+    CHECK_EQ(WheelMoveLevelStep(0, -3), 0);
+    static int held[2];
+    held[0] = 'W'; held[1] = 0;
+    auto down = [](int vk) { for (int k : held) if (k && k == vk) return true; return false; };
+    SetKeyboardMoveScale(kWheelMoveLevels[0]);
+    CHECK_EQ(KeyboardGamepad(down).sThumbLY, int16_t(32767.0f * kWheelMoveLevels[0]));
+    SetKeyboardMoveScale(1.0f);
+    CHECK_EQ(KeyboardGamepad(down).sThumbLY, int16_t(32767));
+}
+
 // Raw mouse motion -> right stick: 50 px = full deflection at sensitivity 1, screen-down = stick down.
 TEST(mouse_motion_maps_to_right_stick)
 {
