@@ -174,8 +174,20 @@ static void WindowThread(DisplaySettings s)
     }
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Splinter Cell: Double Agent Recomp", style, x, y,
         r.right - r.left, r.bottom - r.top, nullptr, nullptr, inst, nullptr);
-    // SCDA_MINIMIZED=1: test runs start minimized without taking focus.
-    ShowWindow(hwnd, getenv("SCDA_MINIMIZED") ? SW_SHOWMINNOACTIVE : SW_SHOW);
+    // Test runs never pop up over the desktop. Scripted runs (SCDA_AUTOPRESS / SCDA_LAUNCH_DATA) open
+    // off-screen without taking focus: still a normal, unoccluded window, so presents and timing match a
+    // visible one. SCDA_MINIMIZED=1: start minimized instead (presents report occluded); =0: show normally.
+    const char* minimized = getenv("SCDA_MINIMIZED");
+    const bool scripted = getenv("SCDA_AUTOPRESS") || getenv("SCDA_LAUNCH_DATA");
+    if (minimized && *minimized != '0')
+        ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+    else if (!minimized && scripted)
+    {
+        SetWindowPos(hwnd, HWND_BOTTOM, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+    else
+        ShowWindow(hwnd, SW_SHOW);
     // Scripted runs (SCDA_AUTOPRESS) never take the mouse: an unattended window must not trap the cursor.
     g_mouseLook = LoadInputSettings(SettingsPath()).mouseLook && !getenv("SCDA_AUTOPRESS");
     if (g_mouseLook)
