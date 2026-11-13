@@ -369,7 +369,7 @@ void UpdateTab()
         SaveSetting(SettingsPath(), "Update", "AutoInstall", autoInstall ? "1" : "0");
     if (!st.source.empty())
         ImGui::TextDisabled("Latest release found on %s", st.source.c_str());
-    ImGui::TextDisabled("Checks gitlab.com/%s and github.com/%s", updater::Repo().c_str(), updater::GitHubRepo().c_str());
+    ImGui::TextDisabled("Checks gitlab.com/%s and git.8gramlabs.com/%s", updater::Repo().c_str(), updater::ForgeRepo().c_str());
 
     // Issue #9: non-Steam game shortcut (Steam overlay, Steam Input).
     ImGui::Separator();
@@ -798,7 +798,7 @@ void OverlayAttach(D3D11Renderer& renderer, HWND hwnd, const DisplaySettings& se
         g_open = true;
         SetInputBlocked(true);
     }
-    // Scripted runs skip the check (no GitHub calls from soak tests) unless SCDA_UPDATE_CHECK is set.
+    // Scripted runs skip the check (no update calls from soak tests) unless SCDA_UPDATE_CHECK is set.
     if ((LoadUpdateSettings(SettingsPath()).checkOnStart && !getenv("SCDA_AUTOPRESS") && !getenv("SCDA_NO_UPDATE_CHECK")) || getenv("SCDA_UPDATE_CHECK"))
         updater::Check();
     renderer.SetOverlay([]

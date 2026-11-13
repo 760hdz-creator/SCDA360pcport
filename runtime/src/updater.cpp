@@ -15,8 +15,8 @@
 #ifndef SCDA_VERSION
 #define SCDA_VERSION "0.0.0"
 #endif
-#ifndef SCDA_UPDATE_GITHUB_REPO
-#define SCDA_UPDATE_GITHUB_REPO "8gramlabs/SCDA360pcport"
+#ifndef SCDA_UPDATE_FORGE_REPO
+#define SCDA_UPDATE_FORGE_REPO "8gramlabs/SCDA360pcport"
 #endif
 #ifndef SCDA_UPDATE_REPO
 #define SCDA_UPDATE_REPO "octagram-labs-group/SCDA360pcport"
@@ -109,8 +109,8 @@ std::string UrlEncode(const std::string& s)
 }
 
 // The installer URL in a release JSON: the value of `key` after the asset named SCDA_Setup.exe
-// (GitLab assets.links[] direct_asset_url; GitHub assets[] browser_download_url, which follows a
-// nested "uploader" object, so this looks ahead rather than to the object's end). Empty if none.
+// (GitLab assets.links[] direct_asset_url; forge (Forgejo) assets[] browser_download_url, which comes
+// a few fields after the name, so this looks ahead rather than to the object's end). Empty if none.
 std::string InstallerUrl(const std::string& json, const std::string& key)
 {
     const size_t name = json.find("\"name\":\"SCDA_Setup.exe\"");
@@ -128,7 +128,7 @@ void Set(const Status& s)
 // One source's latest release.
 struct Candidate
 {
-    std::string source; // "GitLab" / "GitHub"
+    std::string source; // "GitLab" / "Forge"
     bool ok = false;    // answered with a tagged release
     bool none = false;  // answered: no release published
     std::string version, title, installerUrl, error;
@@ -137,9 +137,10 @@ struct Candidate
 Candidate Fetch(bool gitlab)
 {
     Candidate c;
-    c.source = gitlab ? "GitLab" : "GitHub";
+    c.source = gitlab ? "GitLab" : "Forge";
+    // The forge (Forgejo) answers like GitHub: /releases/latest skips drafts and pre-releases.
     const std::string url = gitlab ? "https://gitlab.com/api/v4/projects/" + UrlEncode(Repo()) + "/releases/permalink/latest"
-                                   : "https://api.github.com/repos/" + GitHubRepo() + "/releases/latest";
+                                   : "https://git.8gramlabs.com/api/v1/repos/" + ForgeRepo() + "/releases/latest";
     DWORD code = 0;
     std::string body;
     if (!HttpGet(url, code, body, c.error))
@@ -168,22 +169,23 @@ Candidate Fetch(bool gitlab)
     return c;
 }
 
-// Asks GitLab and GitHub at once (either may be down or gone); the higher version wins, and for the
-// same version GitLab (the project's home) unless only GitHub has the installer. The other source
-// with the same version stays as the download fallback.
+// Asks GitLab and the forge at once (either may be down or behind: the forge copies GitLab's
+// releases once a day). The higher version wins; for the same version the one with the installer,
+// then the forge (its downloads are counted on the site). The other source with the same version
+// stays as the download fallback.
 void RunCheck()
 {
-    Candidate lab, hub;
+    Candidate lab, forge;
     std::thread labThread([&] { lab = Fetch(true); });
-    if (!GitHubRepo().empty())
-        hub = Fetch(false);
+    if (!ForgeRepo().empty())
+        forge = Fetch(false);
     labThread.join();
-    for (const Candidate* c : { &lab, &hub })
+    for (const Candidate* c : { &lab, &forge })
         if (!c->source.empty())
             RuntimeLog("[update] %s: %s\n", c->source.c_str(), c->ok ? ("release " + c->version + (c->installerUrl.empty() ? ", no installer" : ", installer")).c_str()
                                                                   : c->none ? "no release" : c->error.c_str());
     std::vector<const Candidate*> offers;
-    for (const Candidate* c : { &lab, &hub })
+    for (const Candidate* c : { &forge, &lab }) // forge first: kept first on a full tie
         if (c->ok)
             offers.push_back(c);
     std::stable_sort(offers.begin(), offers.end(), [](const Candidate* x, const Candidate* y)
@@ -195,9 +197,9 @@ void RunCheck()
     Status s;
     if (offers.empty())
     {
-        const bool none = lab.none && (hub.source.empty() || hub.none || !hub.error.empty());
+        const bool none = lab.none && (forge.source.empty() || forge.none || !forge.error.empty());
         s.state = none ? State::NoReleases : State::Failed;
-        s.error = lab.error.empty() ? hub.error : hub.error.empty() || hub.source.empty() ? lab.error : "GitLab: " + lab.error + "; GitHub: " + hub.error;
+        s.error = lab.error.empty() ? forge.error : forge.error.empty() || forge.source.empty() ? lab.error : "GitLab: " + lab.error + "; Forge: " + forge.error;
     }
     else
     {
@@ -233,16 +235,20 @@ const std::string& Repo()
     return repo;
 }
 
-const std::string& GitHubRepo()
+const std::string& ForgeRepo()
 {
-    // SCDA_NO_GITHUB_UPDATE=1 skips GitHub; SCDA_UPDATE_GITHUB_REPO=<owner/name> asks another repo (tests).
-    static const std::string repo = getenv("SCDA_NO_GITHUB_UPDATE") ? std::string()
-                                  : getenv("SCDA_UPDATE_GITHUB_REPO") ? std::string(getenv("SCDA_UPDATE_GITHUB_REPO"))
-                                                                      : std::string(SCDA_UPDATE_GITHUB_REPO);
+    // SCDA_NO_FORGE_UPDATE=1 skips the forge; SCDA_UPDATE_FORGE_REPO=<owner/name> asks another repo (tests).
+    static const std::string repo = getenv("SCDA_NO_FORGE_UPDATE") ? std::string()
+                                  : getenv("SCDA_UPDATE_FORGE_REPO") ? std::string(getenv("SCDA_UPDATE_FORGE_REPO"))
+                                                                     : std::string(SCDA_UPDATE_FORGE_REPO);
     return repo;
 }
 
-std::string ReleasePageUrl() { return "https://gitlab.com/" + Repo() + "/-/releases/permalink/latest"; }
+std::string ReleasePageUrl()
+{
+    return ForgeRepo().empty() ? "https://gitlab.com/" + Repo() + "/-/releases/permalink/latest"
+                               : "https://git.8gramlabs.com/" + ForgeRepo() + "/releases/latest";
+}
 
 Status Get()
 {
