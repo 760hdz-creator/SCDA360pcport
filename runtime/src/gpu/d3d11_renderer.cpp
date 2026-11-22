@@ -2648,6 +2648,19 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         m_context->RSSetState(noCullBy[ccwFront].Get());
         (void)noCull;
         m_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+        // SCDA_FACE_NODEPTH=1: also no depth/stencil test (is the geometry there at all?).
+        static const bool faceNoDepth = getenv("SCDA_FACE_NODEPTH") != nullptr;
+        if (faceNoDepth)
+        {
+            static ComPtr<ID3D11DepthStencilState> off;
+            if (!off)
+            {
+                D3D11_DEPTH_STENCIL_DESC dd{};
+                dd.DepthFunc = D3D11_COMPARISON_ALWAYS;
+                m_device->CreateDepthStencilState(&dd, &off);
+            }
+            m_context->OMSetDepthStencilState(off.Get(), 0);
+        }
         if (!faceVs && !facePsHash) RuntimeLog("[face] present %llu draw %u vs %016llx: facing shader\n", m_presented, faceDrawIndex, (unsigned long long)d.vs->hash);
     }
     // Issue #28 near clip (kNearClipGs). shortcut: only the Cozumel far-sea plane VS (c5bd822f, 8-index
