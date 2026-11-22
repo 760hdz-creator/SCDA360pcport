@@ -1100,8 +1100,12 @@ static ColorTarget* ColorTargetFor(ID3D11Device* device, ID3D11DeviceContext* co
         return nullptr;
     t.width = td.Width;
     t.height = td.Height;
-    const float zero[4] = {};
-    context->ClearRenderTargetView(t.rtv.Get(), zero);
+    // SCDA_FILL_NEW=<r>,<g>,<b>,<a> (debug): new EDRAM targets and resolve textures start with this
+    // colour instead of 0 / undefined (does anything read memory the title never wrote?).
+    float fill[4] = {};
+    if (const char* f = getenv("SCDA_FILL_NEW"))
+        sscanf(f, "%f,%f,%f,%f", &fill[0], &fill[1], &fill[2], &fill[3]);
+    context->ClearRenderTargetView(t.rtv.Get(), fill);
     return &r.colorTargets.emplace(key, std::move(t)).first->second;
 }
 
@@ -3169,6 +3173,12 @@ void D3D11Renderer::ExecuteResolve(const Resolve& res)
                     SUCCEEDED(m_device->CreateShaderResourceView(dst.texture.Get(), nullptr, &dst.srv)) &&
                     (!uav || SUCCEEDED(m_device->CreateUnorderedAccessView(dst.texture.Get(), nullptr, &dst.uav))))
                 {
+                    if (const char* f = getenv("SCDA_FILL_NEW"); f && dst.uav) // debug, see ColorTargetFor
+                    {
+                        float fill[4] = {};
+                        sscanf(f, "%f,%f,%f,%f", &fill[0], &fill[1], &fill[2], &fill[3]);
+                        m_context->ClearUnorderedAccessViewFloat(dst.uav.Get(), fill);
+                    }
                     dst.width = w;
                     dst.height = h;
                     dst.format = sd.Format;
