@@ -63,12 +63,21 @@ TEST(polygon_offset_in_viewport_z)
     CHECK(c.vpOffset[2] == 1.0f + 8e-7f);
     CHECK(PolyOffsetDepth(r) == 8e-7f);
     float slope = 0;
-    CHECK_EQ(HostDepthBias(r, slope), 0);
+    CHECK(HostDepthBias(r, slope) > 0); // rasterizer bias kept, VS tie-break on top
     CHECK(slope == 1.0f);
+    r.Set(0x2381, FloatBits(6e-5f));              // larger offsets: tie-break capped at 8e-7
+    CHECK(PolyOffsetDepth(r) == 8e-7f);
+    r.Set(0x2381, FloatBits(8e-7f));
     r.Set(kRegPaClVteCntl, 0x40F);                // no VTE z offset: rasterizer bias as before
     c = BuildSharedConstants(r, 1280, 720);
     CHECK(c.vpOffset[2] == 1.0f && PolyOffsetDepth(r) == 0.0f);
     CHECK(HostDepthBias(r, slope) > 0);
+    r.Set(kRegPaClVteCntl, 0x43F);                // negative (push back) offsets stay on the rasterizer
+    r.Set(0x2381, FloatBits(-2e-5f));
+    r.Set(0x2383, FloatBits(-2e-5f));
+    c = BuildSharedConstants(r, 1280, 720);
+    CHECK(c.vpOffset[2] == 1.0f && PolyOffsetDepth(r) == 0.0f);
+    CHECK(HostDepthBias(r, slope) < 0);
 }
 
 TEST(alu_constants_per_stage)

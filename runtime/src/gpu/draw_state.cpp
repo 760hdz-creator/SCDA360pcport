@@ -765,22 +765,33 @@ static void PolyOffset(const RegisterFile& r, float& scale, float& offset)
     }
 }
 
-// The constant part of the polygon offset as an exact window-depth delta, added to the viewport z
-// offset (XenosViewport: z_clip += offset * w, linear, so near clipping keeps it). A D3D11 DepthBias
-// on a float depth buffer scales with the primitive's own exponent: at the reversed-depth scene
-// values (~0.005) Xenia's [0.5, 1) conversion gave ~7.5e-9 instead of the title's 8e-7, and the
-// Shanghai crane light passes (VS 2212ffa7, additive, GEQUAL no write) tied with their Z prepass
-// (VS 8c592765, other instruction order) -> whole triangles failed per frame (#41). Deliberately not
-// Xenia's relative conversion: D3D9 DEPTHBIAS is an absolute depth delta. Needs the VTE z offset
-// (else the rasterizer bias stays). SCDA_POLY_OFFSET_RASTER=1 = old path (A/B).
+// Exact window-depth tie-break for positive polygon offsets, added to the viewport z offset
+// (XenosViewport: z_clip += offset * w, linear, so near clipping keeps it), on top of the rasterizer
+// bias (HostDepthBias, Xenia's conversion, unchanged). A D3D11 DepthBias on a float depth buffer
+// scales with the primitive's own exponent: at reversed-depth scene values (~0.005) the title's 8e-7
+// became ~7.5e-9, and the Shanghai crane light passes (VS 2212ffa7, additive, GEQUAL no write) tied
+// with their Z prepass (VS 8c592765, other instruction order) -> whole triangles failed per frame
+// (#41). Needs the VTE z offset. SCDA_POLY_OFFSET_RASTER=1 = rasterizer bias only (old, A/B).
+// SCDA_POLY_OFFSET_AB=1 (debug): the renderer sets this on odd presents -> old rasterizer path, so
+// consecutive frame dumps of a static camera A/B the two paths in one run.
+bool g_polyOffsetRasterFrame = false;
+
 float PolyOffsetDepth(const RegisterFile& r)
 {
     static const bool raster = getenv("SCDA_POLY_OFFSET_RASTER") != nullptr || getenv("SCDA_NO_POLY_OFFSET") != nullptr;
-    if (raster || !(r[kRegPaClVteCntl] & 0x20))
+    if (raster || g_polyOffsetRasterFrame || !(r[kRegPaClVteCntl] & 0x20))
         return 0.0f;
     float scale, offset;
     PolyOffset(r, scale, offset);
-    return offset;
+    // Only offsets toward the viewer (positive, reversed depth). The Cozumel far-sea strip (VS
+    // c5bd822f, -2e-5, depth write) sits at the far plane (z/w ~ 0): applied exactly it crosses
+    // z = 0 and is depth-clipped -> sky band between sea and horizon (SCDA_POLY_OFFSET_AB census).
+    // On the 360 the offset is a rasterizer offset after clipping; keep the old path for it.
+    // Capped at 8e-7 (the light passes' value): a tie-break on top of the rasterizer bias, not the
+    // full offset. The query boxes' 6e-5 exact would be ~500 m of distance at the far end (near
+    // plane ~3 units): distant occluders would stop hiding sun/flare queries. SCDA_POLY_OFFSET_CAP=<v>.
+    static const float cap = getenv("SCDA_POLY_OFFSET_CAP") ? float(atof(getenv("SCDA_POLY_OFFSET_CAP"))) : 8e-7f;
+    return offset > 0.0f ? std::min(offset, cap) : 0.0f;
 }
 
 int32_t HostDepthBias(const RegisterFile& r, float& slopeScale)
@@ -792,7 +803,7 @@ int32_t HostDepthBias(const RegisterFile& r, float& slopeScale)
         return 0;
     PolyOffset(r, scale, offset);
     slopeScale = scale * (1.0f / 16.0f); // xenos::kPolygonOffsetScaleSubpixelUnit
-    if (!offset || PolyOffsetDepth(r) != 0.0f) // constant part applied in the VS (PolyOffsetDepth)
+    if (!offset) // the VS tie-break (PolyOffsetDepth) comes on top of this
         return 0;
     const bool float24 = (r[kRegRbDepthInfo] >> 16) & 1;
     int32_t bias = int32_t(std::ceil(std::abs(offset) * (float24 ? float(1u << 21) : float((1u << 24) - 1))));

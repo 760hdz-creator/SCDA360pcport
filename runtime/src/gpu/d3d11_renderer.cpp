@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <bit>
 #include <atomic>
+#include <set>
+#include <tuple>
 #include <bitset>
 #include <cmath>
 #include <cstdio>
@@ -2152,6 +2154,18 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         m_lastSkipped++;
         return;
     }
+    // SCDA_TRACE_POLY_OFFSET=1: each distinct VS/PS/offset/scale with polygon offset enabled, once.
+    static const bool tracePoly = getenv("SCDA_TRACE_POLY_OFFSET") != nullptr;
+    if (tracePoly && (r.regs[0x2205] & 0x1800))
+    {
+        static std::set<std::tuple<uint64_t, uint64_t, uint32_t, uint32_t, uint32_t>> seen;
+        const uint32_t sel = !(r.regs[0x2205] & 1) && (r.regs[0x2205] & 0x800) ? 0x2380 : 0x2382;
+        if (seen.insert({ d.vs->hash, d.ps->hash, r.regs[sel], r.regs[sel + 1], r.regs[0x2200] }).second)
+            RuntimeLog("[polyoff] present %llu vs %016llx ps %016llx scale %g offset %g sc %08X zctl %08X zinfo %08X vte %08X ib %08X n %u\n",
+                (unsigned long long)m_presented, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash,
+                std::bit_cast<float>(r.regs[sel]), std::bit_cast<float>(r.regs[sel + 1]), r.regs[0x2205], r.regs[0x2200], r.regs[kRegRbDepthInfo],
+                r.regs[kRegPaClVteCntl], d.indexBase, d.indexCount);
+    }
     // SCDA_WATCH_DRAW=<vs hash hex>: one cheap line per draw with that VS, every frame (timing-sensitive glitches).
     static const std::vector<uint64_t> watchVs = []
     {
@@ -3742,6 +3756,13 @@ void D3D11Renderer::Present(const Frame& frame)
         return;
     }
     m_presented++;
+    extern bool g_polyOffsetRasterFrame;
+    static const bool polyAb = getenv("SCDA_POLY_OFFSET_AB") != nullptr; // debug: odd presents = old poly offset path
+    if (polyAb)
+    {
+        RuntimeLog("[polyab] present #%llu drawn with %s\n", (unsigned long long)m_presented, g_polyOffsetRasterFrame ? "old" : "new");
+        g_polyOffsetRasterFrame = (m_presented & 1) != 0;
+    }
     // SCDA_CB_STATS=<n>: every n presents, constant buffer binds vs uploads since the last report.
     static const unsigned cbStatsEvery = getenv("SCDA_CB_STATS") ? unsigned(atoi(getenv("SCDA_CB_STATS"))) : 0;
     if (cbStatsEvery && m_presented % cbStatsEvery == 0)
