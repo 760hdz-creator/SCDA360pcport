@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <d3dcompiler.h>
+#include <cstdlib>
 #include <gpu/xenos/shader_recompiler.h>
 #include <gpu/xenos/translate.h>
 
@@ -356,6 +357,11 @@ std::vector<uint8_t> CompileHlsl(const std::string& hlsl, bool pixel, std::strin
     return CompileHlsl(hlsl, pixel ? "ps_5_0" : "vs_5_0", error);
 }
 
+// IEEE strictness: fxc /O1 alone rewrote math (shader diff test: 8fc50f8b dropped an rsq of a second
+// normalize; issue #41: two passes drawing one mesh got different z/w, so the GEQUAL light pass lost
+// triangles). SCDA_FXC_FAST=1: old flags (needs a fresh shader cache).
+static const UINT kCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL1 | (getenv("SCDA_FXC_FAST") ? 0 : D3DCOMPILE_IEEE_STRICTNESS);
+
 std::vector<uint8_t> CompileHlsl(const std::string& hlsl, const char* profile, std::string* error)
 {
     ID3DBlob* code = nullptr;
@@ -363,7 +369,7 @@ std::vector<uint8_t> CompileHlsl(const std::string& hlsl, const char* profile, s
     static const D3D_SHADER_MACRO kVertexDefines[] = { { "SCDA_VERTEX", "1" }, { nullptr, nullptr } };
     const bool vertex = profile[0] == 'v';
     HRESULT hr = D3DCompile(hlsl.data(), hlsl.size(), "shader.hlsl", vertex ? kVertexDefines : nullptr, nullptr, "main",
-        profile, D3DCOMPILE_OPTIMIZATION_LEVEL1, 0, &code, &errors);
+        profile, kCompileFlags, 0, &code, &errors);
     std::vector<uint8_t> out;
     if (SUCCEEDED(hr) && code)
         out.assign((uint8_t*)code->GetBufferPointer(), (uint8_t*)code->GetBufferPointer() + code->GetBufferSize());
