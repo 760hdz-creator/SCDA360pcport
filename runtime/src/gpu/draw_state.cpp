@@ -38,6 +38,7 @@ SharedConstants BuildSharedConstants(const RegisterFile& r, uint32_t rtWidth, ui
         c.vpScale[i] = AsFloat(r[kRegPaClVportXScale + i * 2]);
         c.vpOffset[i] = AsFloat(r[kRegPaClVportXScale + i * 2 + 1]);
     }
+    c.vpOffset[2] += PolyOffsetDepth(r); // 0 unless the VTE z offset is on (see PolyOffsetDepth)
     // Sky layers drawn over the sky dome (newyork_02 moon VS d2d3127c, clouds VS d0856495): depth test,
     // no depth write, at the far plane (reversed depth ~4e-6). Their WVP translations come from the
     // CPU on a 1/8 fp32 grid (cancellation), so the near term jitters 1.5-2.4 per object per frame
@@ -748,14 +749,10 @@ bool HostFrontCounterClockwise(const RegisterFile& r) { return !(r[0x2205] & 4);
 // The title's occlusion query boxes use 6e-5: without it, box faces coplanar with walls/floors fail
 // the GEQUAL test on camera turns -> the query reads 0 -> the room is culled for a frame (JBA HQ).
 // shortcut: lines/points get the polygon offset too (bit 13 para enable not checked).
-int32_t HostDepthBias(const RegisterFile& r, float& slopeScale)
+static void PolyOffset(const RegisterFile& r, float& scale, float& offset)
 {
-    slopeScale = 0;
-    static const bool off = getenv("SCDA_NO_POLY_OFFSET") != nullptr; // A/B: old (ignored)
     const uint32_t m = r[0x2205];
-    float scale = 0, offset = 0;
-    if (off)
-        return 0;
+    scale = offset = 0;
     if ((m & (1u << 11)) && !(m & 1))
     {
         scale = std::bit_cast<float>(r[0x2380]);
@@ -766,8 +763,36 @@ int32_t HostDepthBias(const RegisterFile& r, float& slopeScale)
         scale = std::bit_cast<float>(r[0x2382]);
         offset = std::bit_cast<float>(r[0x2383]);
     }
+}
+
+// The constant part of the polygon offset as an exact window-depth delta, added to the viewport z
+// offset (XenosViewport: z_clip += offset * w, linear, so near clipping keeps it). A D3D11 DepthBias
+// on a float depth buffer scales with the primitive's own exponent: at the reversed-depth scene
+// values (~0.005) Xenia's [0.5, 1) conversion gave ~7.5e-9 instead of the title's 8e-7, and the
+// Shanghai crane light passes (VS 2212ffa7, additive, GEQUAL no write) tied with their Z prepass
+// (VS 8c592765, other instruction order) -> whole triangles failed per frame (#41). Deliberately not
+// Xenia's relative conversion: D3D9 DEPTHBIAS is an absolute depth delta. Needs the VTE z offset
+// (else the rasterizer bias stays). SCDA_POLY_OFFSET_RASTER=1 = old path (A/B).
+float PolyOffsetDepth(const RegisterFile& r)
+{
+    static const bool raster = getenv("SCDA_POLY_OFFSET_RASTER") != nullptr || getenv("SCDA_NO_POLY_OFFSET") != nullptr;
+    if (raster || !(r[kRegPaClVteCntl] & 0x20))
+        return 0.0f;
+    float scale, offset;
+    PolyOffset(r, scale, offset);
+    return offset;
+}
+
+int32_t HostDepthBias(const RegisterFile& r, float& slopeScale)
+{
+    slopeScale = 0;
+    static const bool off = getenv("SCDA_NO_POLY_OFFSET") != nullptr; // A/B: old (ignored)
+    float scale, offset;
+    if (off)
+        return 0;
+    PolyOffset(r, scale, offset);
     slopeScale = scale * (1.0f / 16.0f); // xenos::kPolygonOffsetScaleSubpixelUnit
-    if (!offset)
+    if (!offset || PolyOffsetDepth(r) != 0.0f) // constant part applied in the VS (PolyOffsetDepth)
         return 0;
     const bool float24 = (r[kRegRbDepthInfo] >> 16) & 1;
     int32_t bias = int32_t(std::ceil(std::abs(offset) * (float24 ? float(1u << 21) : float((1u << 24) - 1))));

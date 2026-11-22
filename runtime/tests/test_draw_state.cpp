@@ -47,6 +47,30 @@ TEST(shared_constants_viewport_and_offsets)
     CHECK_EQ(c.colorClamp, 5u);
 }
 
+// #41: the constant polygon offset is an absolute window-depth delta in the VS (viewport z offset),
+// not a D3D11 DepthBias (that scales with the primitive's exponent); the slope stays on the rasterizer.
+TEST(polygon_offset_in_viewport_z)
+{
+    RegisterFile r;
+    r.Set(kRegPaClVteCntl, 0x43F);
+    r.Set(0x2114, FloatBits(1.0f));               // PA_CL_VPORT_ZOFFSET
+    r.Set(0x2205, 2u | (1u << 11) | (1u << 12)); // cull back, poly offset front + back
+    r.Set(0x2380, FloatBits(16.0f));
+    r.Set(0x2381, FloatBits(8e-7f));
+    r.Set(0x2382, FloatBits(16.0f));
+    r.Set(0x2383, FloatBits(8e-7f));
+    SharedConstants c = BuildSharedConstants(r, 1280, 720);
+    CHECK(c.vpOffset[2] == 1.0f + 8e-7f);
+    CHECK(PolyOffsetDepth(r) == 8e-7f);
+    float slope = 0;
+    CHECK_EQ(HostDepthBias(r, slope), 0);
+    CHECK(slope == 1.0f);
+    r.Set(kRegPaClVteCntl, 0x40F);                // no VTE z offset: rasterizer bias as before
+    c = BuildSharedConstants(r, 1280, 720);
+    CHECK(c.vpOffset[2] == 1.0f && PolyOffsetDepth(r) == 0.0f);
+    CHECK(HostDepthBias(r, slope) > 0);
+}
+
 TEST(alu_constants_per_stage)
 {
     RegisterFile r;

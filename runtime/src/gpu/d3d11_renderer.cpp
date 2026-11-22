@@ -2623,8 +2623,9 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
             static const char kFacePs[] = "void main(bool f : SV_IsFrontFace, out float4 o0 : SV_Target0, out float4 o1 : SV_Target1,"
                 " out float4 o2 : SV_Target2, out float4 o3 : SV_Target3) { o0 = f ? float4(1, 0, 0, 1) : float4(0, 1, 0, 1); o1 = o2 = o3 = o0; }";
             // SCDA_FACE_DEPTHCOLOR=<scale>: show the fragment depth instead (r = frac(z * scale), g = z * 100).
-            static const char kDepthPs[] = "void main(float4 p : SV_Position, out float4 o0 : SV_Target0, out float4 o1 : SV_Target1,"
-                " out float4 o2 : SV_Target2, out float4 o3 : SV_Target3) { o0 = float4(frac(p.z * SCALE), saturate(p.z * 100), 0, 1); o1 = o2 = o3 = o0; }";
+            // Back faces are discarded (face mode draws unculled; the guest pass culls them).
+            static const char kDepthPs[] = "void main(float4 p : SV_Position, bool f : SV_IsFrontFace, out float4 o0 : SV_Target0, out float4 o1 : SV_Target1,"
+                " out float4 o2 : SV_Target2, out float4 o3 : SV_Target3) { if (!f) discard; o0 = float4(frac(p.z * SCALE), saturate(p.z * 100), 0, 1); o1 = o2 = o3 = o0; }";
             std::string error;
             const char* depthScale = getenv("SCDA_FACE_DEPTHCOLOR");
             std::string src = kFacePs;
@@ -2918,9 +2919,9 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
                         else
                             for (int i = 0; i < 4; i++)
                                 c[i] = float((v >> (8 * i)) & 0xFF) / 255.0f;
-                        RuntimeLog("[pixel] draw %u vs %016llx ps %016llx rt %08X/%08X blend %08X fmt %u -> %.3f %.3f %.3f %.3f\n",
+                        RuntimeLog("[pixel] draw %u vs %016llx ps %016llx rt %08X/%08X blend %08X fmt %u -> %.6g %.6g %.6g %.6g ib %08X n %u\n",
                             m_lastDrawn + m_lastSkipped - 1, (unsigned long long)d.vs->hash, (unsigned long long)d.ps->hash, r.regs[kRegRbSurfaceInfo],
-                            r.regs[kRegRbColorInfo], r.regs[0x2201], uint32_t(td.Format), c[0], c[1], c[2], c[3]);
+                            r.regs[kRegRbColorInfo], r.regs[0x2201], uint32_t(td.Format), c[0], c[1], c[2], c[3], d.indexBase, d.indexCount);
                         RuntimeLog("[pixel]   cull %08X (mode %u ccw %u) vport xs %.3f ys %.3f vte %08X\n", r.regs[0x2205], HostCullMode(r.regs),
                             uint32_t(HostFrontCounterClockwise(r.regs)), std::bit_cast<float>(r.regs[0x210F]), std::bit_cast<float>(r.regs[0x2111]), r.regs[0x2206]);
                         RuntimeLog("[pixel]   psbools %08X %08X %08X %08X loops %08X %08X\n", r.regs[kRegBoolConstants + 4], r.regs[kRegBoolConstants + 5],
@@ -3584,7 +3585,10 @@ void D3D11Renderer::Present(const Frame& frame)
                 return true;
             }();
             (void)parsed;
-            if (dumpDraws && !m_dumpPath.empty() && r.last && (g_frameDrawBase + i) % step == 0 && g_frameDrawBase + i >= first && g_frameDrawBase + i <= last)
+            // SCDA_DUMP_DRAWS_IB=<index base hex>: only draws with that index base.
+            static const uint32_t dumpIb = getenv("SCDA_DUMP_DRAWS_IB") ? strtoul(getenv("SCDA_DUMP_DRAWS_IB"), nullptr, 16) : 0;
+            if (dumpDraws && !m_dumpPath.empty() && r.last && (g_frameDrawBase + i) % step == 0 && g_frameDrawBase + i >= first && g_frameDrawBase + i <= last
+                && (!dumpIb || (i < frame.draws.size() && frame.draws[i].indexBase == dumpIb)))
             {
                 char name[96];
                 snprintf(name, sizeof(name), "/p%llu_d%05zu.bmp", (unsigned long long)m_presented, g_frameDrawBase + i); // guest-frame draw number (partials continue it)
