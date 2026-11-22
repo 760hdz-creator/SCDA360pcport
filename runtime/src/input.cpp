@@ -41,19 +41,29 @@ int WheelMoveLevelStep(int level, int wheel)
     return std::clamp(level + wheel, 0, last);
 }
 
-bool WheelSpeedState(const char* stateName)
+WheelMode WheelModeForState(const char* stateName)
 {
-    static const char* const kStates[] = { "s_PlayerWalking", "s_Sneaking", "s_FirstPersonTargeting", "s_SideToWall",
+    static const char* const kMove[] = { "s_PlayerWalking", "s_Sneaking", "s_FirstPersonTargeting", "s_SideToWall",
         "s_SideToWallTargeting", "s_PlayerSwimming", "s_SwimInHole", "s_Carry" };
-    for (const char* s : kStates)
-        if (stateName && !strcmp(stateName, s))
-            return true;
-    return false;
+    if (!stateName)
+        return WheelMode::None;
+    for (const char* s : kMove)
+        if (!strcmp(stateName, s))
+            return WheelMode::Move;
+    return strcmp(stateName, "s_DefuseNuclearBomb") ? WheelMode::None : WheelMode::Manipulator;
 }
 
-static std::atomic<bool> g_wheelSpeedState{ false };
-void SetWheelSpeedState(bool on) { g_wheelSpeedState = on; }
-bool WheelSpeedStateOn() { return g_wheelSpeedState; }
+static std::atomic<WheelMode> g_wheelMode{ WheelMode::None };
+void SetWheelMode(WheelMode mode) { g_wheelMode = mode; }
+WheelMode WheelModeNow() { return g_wheelMode; }
+
+int ManipulatorLevelStep(int level, int wheel) { return std::clamp(level + wheel, kManipulatorMin, kManipulatorMax); }
+
+void ManipulatorTriggers(int level, uint8_t& lt, uint8_t& rt)
+{
+    lt = level < 0 ? 255 : 0;
+    rt = level > 0 ? kManipulatorRt[std::min(level, kManipulatorMax)] : 0;
+}
 
 XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
 {
@@ -307,13 +317,21 @@ SCDA_IMPORT(XamInputGetState)
     bool keyboardActive = false;
     int dx, dy, wheel;
     MouseTake(dx, dy, wheel); // drained every poll so unfocused motion never piles up
-    // Issue #38: the wheel speed level applies only while Sam walks (WheelSpeedState: not paused, not at a
+    // Issue #38: the wheel speed level applies only while Sam walks (WheelMode::Move: not paused, not at a
     // keypad, lock, computer or menu). Everywhere else WASD gets full deflection, so a low level cannot
     // leave it below a menu's or minigame's threshold.
     static int wheelLevel = int(std::size(kWheelMoveLevels)) - 1;
-    const bool wheelSpeed = mouse.mouseLook && mouse.wheelMoveSpeed && MouseLookLive(); // wheel picks the level
-    const bool gameplay = wheelSpeed && WheelSpeedStateOn();                             // the level applies
+    const WheelMode mode = WheelModeNow();
+    const bool manipulator = mouse.mouseLook && mouse.wheelMoveSpeed && mode == WheelMode::Manipulator;
+    const bool wheelSpeed = mouse.mouseLook && mouse.wheelMoveSpeed && MouseLookLive() && !manipulator; // wheel picks the level
+    const bool gameplay = wheelSpeed && mode == WheelMode::Move;                                         // the level applies
     SetKeyboardMoveScale(gameplay ? kWheelMoveLevels[wheelLevel] : 1.0f);
+    // Issue #39: each time the mine assembly arm opens, its wheel level starts at stop.
+    static int manipulatorLevel = 0;
+    static bool wasManipulator = false;
+    if (manipulator && !wasManipulator)
+        manipulatorLevel = 0;
+    wasManipulator = manipulator;
     // A scripted run ignores the keyboard and mouse, so typing elsewhere cannot leak into it.
     if (script.empty() && GameWindowFocused())
     {
@@ -342,7 +360,19 @@ SCDA_IMPORT(XamInputGetState)
         }
         // Issue #35: in gameplay (direct mouse path live) the wheel sets the keyboard move speed;
         // elsewhere (menus) it scrolls with the d-pad.
-        if (wheelSpeed && wheel)
+        if (manipulator)
+        {
+            if (wheel)
+            {
+                manipulatorLevel = ManipulatorLevelStep(manipulatorLevel, wheel);
+                RuntimeLog("[input] manipulator level %d\n", manipulatorLevel);
+            }
+            uint8_t lt, rt;
+            ManipulatorTriggers(manipulatorLevel, lt, rt);
+            g.bLeftTrigger = std::max(g.bLeftTrigger, lt);
+            g.bRightTrigger = std::max(g.bRightTrigger, rt);
+        }
+        else if (wheelSpeed && wheel)
         {
             wheelLevel = WheelMoveLevelStep(wheelLevel, wheel);
             if (gameplay)
@@ -367,7 +397,7 @@ SCDA_IMPORT(XamInputGetState)
     if (trace)
         RuntimeLog("[input] frame %llu tid %lu dx %d dy %d wheel %d fg %d btn %04x rx %d ry %d lx %d ly %d live %d\n",
             (unsigned long long)Frames().FramesEnded(), GetCurrentThreadId(), dx, dy, wheel, int(GameWindowFocused()),
-            g.wButtons, g.sThumbRX, g.sThumbRY, g.sThumbLX, g.sThumbLY, int(gameplay));
+            g.wButtons, g.sThumbRX, g.sThumbRY, g.sThumbLX, g.sThumbLY, int(gameplay) + 2 * int(manipulator));
     // The packet number changes whenever the state does.
     static std::mutex m;
     static XINPUT_GAMEPAD last{};

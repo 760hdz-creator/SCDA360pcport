@@ -24,12 +24,22 @@ constexpr float kStickDeadZone = 0.3f;
 constexpr float kWheelMoveLevels[] = { 0.475f, 0.65f, 0.825f, 1.0f }; // 4 steps like the PC version (#35)
 constexpr float kMinKeyboardMove = 0.35f;
 int WheelMoveLevelStep(int level, int wheel); // clamps to the table
-// Player controller script states where Sam walks under the movement keys (s_PlayerWalking, targeting,
-// against a wall, swimming, carrying): only these use the wheel level. fov.cpp checks the state and
-// Level.Pauser each engine tick and calls SetWheelSpeedState; input polls read it.
-bool WheelSpeedState(const char* stateName);
-void SetWheelSpeedState(bool on);
-bool WheelSpeedStateOn();
+// What the wheel does, from the player controller's script state (fov.cpp checks the state and Level.Pauser
+// each engine tick and calls SetWheelMode; input polls read WheelModeNow):
+// Move: Sam walks under the movement keys (s_PlayerWalking, targeting, against a wall, swimming, carrying),
+//   the wheel level scales WASD. Only these states: keypads, locks and menus get full deflection (#38).
+// Manipulator: the mine assembly arm (s_DefuseNuclearBomb, #39). Its speed is the right trigger's pressure
+//   (0.5 and below: still; 0.7 slow; 1 fast) and the left trigger raises the arm. Like the PC version the
+//   wheel picks reverse, stop or one of three speeds, held until changed (kManipulatorLevels).
+enum class WheelMode { None, Move, Manipulator };
+WheelMode WheelModeForState(const char* stateName);
+void SetWheelMode(WheelMode mode);
+WheelMode WheelModeNow();
+// Manipulator level -> triggers. -1 = reverse (LT full), 0 = stop, 1..3 = RT pressure.
+constexpr int kManipulatorMin = -1, kManipulatorMax = 3;
+constexpr uint8_t kManipulatorRt[] = { 0, 180, 217, 255 }; // stop, slow (0.7), medium (0.85), fast
+int ManipulatorLevelStep(int level, int wheel); // clamps to kManipulatorMin..kManipulatorMax
+void ManipulatorTriggers(int level, uint8_t& lt, uint8_t& rt);
 void SetKeyboardMoveScale(float scale);       // KeyboardGamepad stick scale (1 = full), floored at kMinKeyboardMove
 
 // Mouse look. The window thread adds raw motion and wheel notches; each XamInputGetState poll

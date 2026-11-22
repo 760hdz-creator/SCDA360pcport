@@ -167,10 +167,10 @@ void FovTick()
     if (!g_controller)
     {
         MouseLookSetLive(false);
-        SetWheelSpeedState(false);
+        SetWheelMode(WheelMode::None);
         return;
     }
-    // Wheel move speed gate (input.h WheelSpeedState, issues #35/#38): the player controller's script state
+    // Wheel mode (input.h WheelModeForState, issues #35/#38/#39): the player controller's script state
     // is the UState at StateFrame (UObject +0xC) +4; the pause menu sets Level.Pauser. Keypads, locks,
     // computers, menus and every other non-walking state get full keyboard deflection.
     // SCDA_TRACE_STATE=1 logs each change.
@@ -193,13 +193,13 @@ void FovTick()
             lastState = state;
             stateName = state && GuestRangeReadable(g_base + state, 0x50) && ClassName(state) == "State" ? NameOf(state) : "";
         }
-        const bool moving = !paused && WheelSpeedState(stateName.c_str());
+        const WheelMode mode = paused ? WheelMode::None : WheelModeForState(stateName.c_str());
         static bool lastPaused = false;
         static std::string lastName;
         if (traceState && (stateName != lastName || paused != lastPaused))
-            RuntimeLog("[state] %s%s wheel speed %d\n", stateName.empty() ? "?" : stateName.c_str(), paused ? " (paused)" : "", int(moving));
+            RuntimeLog("[state] %s%s wheel mode %d\n", stateName.empty() ? "?" : stateName.c_str(), paused ? " (paused)" : "", int(mode));
         lastName = stateName, lastPaused = paused;
-        SetWheelSpeedState(moving);
+        SetWheelMode(mode);
     }
     // Mouse look (input.h MouseToLook): every tick, this tick's mouse total into aMouseX/aMouseY (0 when
     // idle, so a value never lingers). Only while the controller object still has its class (not stale

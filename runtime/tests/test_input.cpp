@@ -78,12 +78,31 @@ TEST(wheel_sets_keyboard_move_speed)
 // Issue #38: the wheel level applies only in the walking states; keypads, locks and the rest get full deflection.
 TEST(wheel_speed_states)
 {
-    CHECK(WheelSpeedState("s_PlayerWalking"));
-    CHECK(WheelSpeedState("s_FirstPersonTargeting"));
-    CHECK(!WheelSpeedState("s_KeyPadInteract"));
-    CHECK(!WheelSpeedState("s_PickLock"));
-    CHECK(!WheelSpeedState(""));
-    CHECK(!WheelSpeedState(nullptr));
+    CHECK(WheelModeForState("s_PlayerWalking") == WheelMode::Move);
+    CHECK(WheelModeForState("s_FirstPersonTargeting") == WheelMode::Move);
+    CHECK(WheelModeForState("s_KeyPadInteract") == WheelMode::None);
+    CHECK(WheelModeForState("s_PickLock") == WheelMode::None);
+    CHECK(WheelModeForState("") == WheelMode::None);
+    CHECK(WheelModeForState(nullptr) == WheelMode::None);
+    CHECK(WheelModeForState("s_DefuseNuclearBomb") == WheelMode::Manipulator);
+}
+
+// Issue #39: the mine assembly arm's wheel levels: reverse (LT), stop, three RT pressures above the
+// title's 0.5 still zone.
+TEST(manipulator_wheel_levels)
+{
+    CHECK_EQ(ManipulatorLevelStep(0, -5), kManipulatorMin);
+    CHECK_EQ(ManipulatorLevelStep(0, 9), kManipulatorMax);
+    uint8_t lt, rt;
+    ManipulatorTriggers(-1, lt, rt);
+    CHECK(lt == 255 && rt == 0);
+    ManipulatorTriggers(0, lt, rt);
+    CHECK(lt == 0 && rt == 0);
+    for (int level = 1; level <= kManipulatorMax; level++)
+    {
+        ManipulatorTriggers(level, lt, rt);
+        CHECK(lt == 0 && rt > 128 && rt > kManipulatorRt[level - 1]);
+    }
 }
 
 // Raw mouse motion -> right stick: 50 px = full deflection at sensitivity 1, screen-down = stick down.
