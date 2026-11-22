@@ -3084,7 +3084,11 @@ void D3D11Renderer::PollQueries()
         if (now - p.ended < lag)
             return false;
         UINT64 samples = 0;
-        const HRESULT hr = m_context->GetData(p.query.Get(), &samples, sizeof(samples), 0);
+        HRESULT hr = m_context->GetData(p.query.Get(), &samples, sizeof(samples), 0);
+        // SCDA_QUERY_SYNC=1 (debug): wait for every result (timing A/B).
+        static const bool sync = getenv("SCDA_QUERY_SYNC") != nullptr;
+        while (sync && hr == S_FALSE)
+            hr = m_context->GetData(p.query.Get(), &samples, sizeof(samples), 0);
         const bool lost = hr != S_OK && (hr != S_FALSE || now - p.ended > lag + 2000);
         if (hr != S_OK && !lost)
             return false;
