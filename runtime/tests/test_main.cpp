@@ -1,6 +1,8 @@
 #include "check.h"
 #include <cstdarg>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 
 #include <string>
 #include <alloc_tracker.h>
@@ -62,8 +64,11 @@ int main()
 {
     setvbuf(stdout, nullptr, _IONBF, 0); // a crashing test must not swallow earlier results
     int failures = 0;
+    const char* filter = getenv("SCDA_TEST_FILTER"); // run only tests whose name contains this
     for (auto& t : TestRegistry())
     {
+        if (filter && !strstr(t.name, filter))
+            continue;
         TestFailed() = false;
         t.fn();
         std::printf("[%s] %s\n", TestFailed() ? "FAIL" : " ok ", t.name);
