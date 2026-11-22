@@ -3093,7 +3093,10 @@ void D3D11Renderer::PollQueries()
         if (hr != S_OK && !lost)
             return false;
         static const bool allVisible = getenv("SCDA_QUERY_ALL_VISIBLE") != nullptr; // A/B: every query fully visible
-        const uint32_t guest = lost || allVisible || g_debugQueriesVisible ? kOcclusionFallbackSamples : uint32_t(std::min<UINT64>(samples / std::max(p.samplesPerPixel, 1u), 0x7FFFFFFF));
+        // SCDA_QUERY_SCALE=<k> (debug): guest counts x k (sample-unit A/B).
+        static const double qscale = getenv("SCDA_QUERY_SCALE") ? atof(getenv("SCDA_QUERY_SCALE")) : 1.0;
+        const uint32_t guest = lost || allVisible || g_debugQueriesVisible ? kOcclusionFallbackSamples
+            : uint32_t(std::min<double>(double(samples / std::max(p.samplesPerPixel, 1u)) * qscale, 0x7FFFFFFF));
         const bool written = Frames().VisibleWrite([&] { return WriteOcclusionResult(p.address, p.generation, guest); });
         Frames().QueryAnswered();
         if (trace)
