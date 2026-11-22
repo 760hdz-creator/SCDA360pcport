@@ -16,9 +16,21 @@ XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk));
 // Issue #35: [Input] WheelMoveSpeed=1 (default): in gameplay the mouse wheel picks how far the movement
 // keys push the left stick (Sam's speed follows the stick, like the PC version's wheel). Levels
 // kWheelMoveLevels; wheel up = faster. Starts at full speed. Walk still scales it by WalkSpeed.
-constexpr float kWheelMoveLevels[] = { 0.3f, 0.55f, 0.775f, 1.0f }; // 4 steps like the PC version (#35)
+// The title zeroes the stick inside its own dead zone (SplinterCell4User.ini JoyX/JoyY DeadZone=0.3), so the
+// levels are the PC version's 25/50/75/100% steps placed above it (0.3 + 0.7 * step), and no keyboard move
+// ever lands inside it (kMinKeyboardMove): the old 0.3 bottom step stopped Sam instead of sneaking (#35).
+// The levels apply only while Sam walks (WheelSpeedStateOn); menus, keypads and minigames get full deflection (#38).
+constexpr float kStickDeadZone = 0.3f;
+constexpr float kWheelMoveLevels[] = { 0.475f, 0.65f, 0.825f, 1.0f }; // 4 steps like the PC version (#35)
+constexpr float kMinKeyboardMove = 0.35f;
 int WheelMoveLevelStep(int level, int wheel); // clamps to the table
-void SetKeyboardMoveScale(float scale);       // KeyboardGamepad stick scale (1 = full)
+// Player controller script states where Sam walks under the movement keys (s_PlayerWalking, targeting,
+// against a wall, swimming, carrying): only these use the wheel level. fov.cpp checks the state and
+// Level.Pauser each engine tick and calls SetWheelSpeedState; input polls read it.
+bool WheelSpeedState(const char* stateName);
+void SetWheelSpeedState(bool on);
+bool WheelSpeedStateOn();
+void SetKeyboardMoveScale(float scale);       // KeyboardGamepad stick scale (1 = full), floored at kMinKeyboardMove
 
 // Mouse look. The window thread adds raw motion and wheel notches; each XamInputGetState poll
 // takes them (MouseTake zeroes the totals) and turns the motion into the right stick: full

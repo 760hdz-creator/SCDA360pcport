@@ -167,7 +167,39 @@ void FovTick()
     if (!g_controller)
     {
         MouseLookSetLive(false);
+        SetWheelSpeedState(false);
         return;
+    }
+    // Wheel move speed gate (input.h WheelSpeedState, issues #35/#38): the player controller's script state
+    // is the UState at StateFrame (UObject +0xC) +4; the pause menu sets Level.Pauser. Keypads, locks,
+    // computers, menus and every other non-walking state get full keyboard deflection.
+    // SCDA_TRACE_STATE=1 logs each change.
+    {
+        static uint32_t cls = 0, levelOff = 0, pauserOff = 0, lastState = 0;
+        static std::string stateName;
+        static const bool traceState = getenv("SCDA_TRACE_STATE") != nullptr;
+        if (cls != g_controllerClass)
+            cls = g_controllerClass, levelOff = PropertyOffset(cls, "Level"), pauserOff = 0, lastState = 0;
+        const uint32_t level = levelOff ? GuestLoad32(g_controller + levelOff) : 0;
+        if (level && !pauserOff && GuestRangeReadable(g_base + level, 0x50))
+            pauserOff = PropertyOffset(GuestLoad32(level + 0x24), "Pauser");
+        const bool paused = level && pauserOff && GuestLoad32(level + pauserOff);
+        const uint32_t frame = GuestLoad32(g_controller + 0xC);
+        uint32_t state = 0;
+        if (frame && GuestRangeReadable(g_base + frame, 8))
+            state = GuestLoad32(frame + 4);
+        if (state != lastState)
+        {
+            lastState = state;
+            stateName = state && GuestRangeReadable(g_base + state, 0x50) && ClassName(state) == "State" ? NameOf(state) : "";
+        }
+        const bool moving = !paused && WheelSpeedState(stateName.c_str());
+        static bool lastPaused = false;
+        static std::string lastName;
+        if (traceState && (stateName != lastName || paused != lastPaused))
+            RuntimeLog("[state] %s%s wheel speed %d\n", stateName.empty() ? "?" : stateName.c_str(), paused ? " (paused)" : "", int(moving));
+        lastName = stateName, lastPaused = paused;
+        SetWheelSpeedState(moving);
     }
     // Mouse look (input.h MouseToLook): every tick, this tick's mouse total into aMouseX/aMouseY (0 when
     // idle, so a value never lingers). Only while the controller object still has its class (not stale

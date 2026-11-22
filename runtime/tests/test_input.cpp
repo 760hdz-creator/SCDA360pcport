@@ -65,6 +65,25 @@ TEST(wheel_sets_keyboard_move_speed)
     CHECK_EQ(KeyboardGamepad(down).sThumbLY, int16_t(32767.0f * kWheelMoveLevels[0]));
     SetKeyboardMoveScale(1.0f);
     CHECK_EQ(KeyboardGamepad(down).sThumbLY, int16_t(32767));
+    // Every level sits above the title's 0.3 dead zone (the old bottom step stopped Sam), and a tiny
+    // scale (lowest level x Walk) is floored above it too.
+    for (float level : kWheelMoveLevels)
+        CHECK(level > kStickDeadZone);
+    SetKeyboardMoveScale(0.1f);
+    CHECK_EQ(KeyboardGamepad(down).sThumbLY, int16_t(32767.0f * kMinKeyboardMove));
+    CHECK(kMinKeyboardMove > kStickDeadZone);
+    SetKeyboardMoveScale(1.0f);
+}
+
+// Issue #38: the wheel level applies only in the walking states; keypads, locks and the rest get full deflection.
+TEST(wheel_speed_states)
+{
+    CHECK(WheelSpeedState("s_PlayerWalking"));
+    CHECK(WheelSpeedState("s_FirstPersonTargeting"));
+    CHECK(!WheelSpeedState("s_KeyPadInteract"));
+    CHECK(!WheelSpeedState("s_PickLock"));
+    CHECK(!WheelSpeedState(""));
+    CHECK(!WheelSpeedState(nullptr));
 }
 
 // Raw mouse motion -> right stick: 50 px = full deflection at sensitivity 1, screen-down = stick down.
@@ -351,5 +370,6 @@ TEST(key_bindings_rebind_and_walk)
     XINPUT_GAMEPAD g = KeyboardGamepad(down);
     SetKeyBindings(DefaultKeyBindings());
     CHECK_EQ(g.wButtons, uint16_t(XINPUT_GAMEPAD_A));
-    CHECK_EQ(g.sThumbLY, int16_t(8191));
+    // WalkSpeed 0.25 would sit inside the title's 0.3 stick dead zone (Sam stops): floored at kMinKeyboardMove.
+    CHECK_EQ(g.sThumbLY, int16_t(32767.0f * kMinKeyboardMove));
 }

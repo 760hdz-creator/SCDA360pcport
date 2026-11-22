@@ -41,6 +41,20 @@ int WheelMoveLevelStep(int level, int wheel)
     return std::clamp(level + wheel, 0, last);
 }
 
+bool WheelSpeedState(const char* stateName)
+{
+    static const char* const kStates[] = { "s_PlayerWalking", "s_Sneaking", "s_FirstPersonTargeting", "s_SideToWall",
+        "s_SideToWallTargeting", "s_PlayerSwimming", "s_SwimInHole", "s_Carry" };
+    for (const char* s : kStates)
+        if (stateName && !strcmp(stateName, s))
+            return true;
+    return false;
+}
+
+static std::atomic<bool> g_wheelSpeedState{ false };
+void SetWheelSpeedState(bool on) { g_wheelSpeedState = on; }
+bool WheelSpeedStateOn() { return g_wheelSpeedState; }
+
 XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
 {
     const KeyBindings& kb = CurrentKeyBindings();
@@ -64,7 +78,9 @@ XINPUT_GAMEPAD KeyboardGamepad(bool (*down)(int vk))
         if (held(b.action))
             g.wButtons |= b.button;
     // Walk (held): the movement keys deflect the left stick only to WalkSpeed (Sam's speed follows the stick).
-    const int16_t full = int16_t(32767.0f * g_keyboardMoveScale * (held(KeyAction::Walk) ? kb.walkSpeed : 1.0f));
+    // Never inside the title's stick dead zone (kMinKeyboardMove, issue #35).
+    const float move = std::max(kMinKeyboardMove, g_keyboardMoveScale * (held(KeyAction::Walk) ? kb.walkSpeed : 1.0f));
+    const int16_t full = int16_t(32767.0f * move);
     auto axis = [&](KeyAction neg, KeyAction pos, int16_t max) { return int16_t((held(pos) ? max : 0) - (held(neg) ? max : 0)); };
     g.sThumbLX = axis(KeyAction::MoveLeft, KeyAction::MoveRight, full);
     g.sThumbLY = axis(KeyAction::MoveBack, KeyAction::MoveForward, full);
@@ -291,6 +307,13 @@ SCDA_IMPORT(XamInputGetState)
     bool keyboardActive = false;
     int dx, dy, wheel;
     MouseTake(dx, dy, wheel); // drained every poll so unfocused motion never piles up
+    // Issue #38: the wheel speed level applies only while Sam walks (WheelSpeedState: not paused, not at a
+    // keypad, lock, computer or menu). Everywhere else WASD gets full deflection, so a low level cannot
+    // leave it below a menu's or minigame's threshold.
+    static int wheelLevel = int(std::size(kWheelMoveLevels)) - 1;
+    const bool wheelSpeed = mouse.mouseLook && mouse.wheelMoveSpeed && MouseLookLive(); // wheel picks the level
+    const bool gameplay = wheelSpeed && WheelSpeedStateOn();                             // the level applies
+    SetKeyboardMoveScale(gameplay ? kWheelMoveLevels[wheelLevel] : 1.0f);
     // A scripted run ignores the keyboard and mouse, so typing elsewhere cannot leak into it.
     if (script.empty() && GameWindowFocused())
     {
@@ -319,12 +342,12 @@ SCDA_IMPORT(XamInputGetState)
         }
         // Issue #35: in gameplay (direct mouse path live) the wheel sets the keyboard move speed;
         // elsewhere (menus) it scrolls with the d-pad.
-        if (mouse.mouseLook && wheel && mouse.wheelMoveSpeed && MouseLookLive())
+        if (wheelSpeed && wheel)
         {
-            static int level = int(std::size(kWheelMoveLevels)) - 1;
-            level = WheelMoveLevelStep(level, wheel);
-            SetKeyboardMoveScale(kWheelMoveLevels[level]);
-            RuntimeLog("[input] wheel move speed %d/%d\n", level + 1, int(std::size(kWheelMoveLevels)));
+            wheelLevel = WheelMoveLevelStep(wheelLevel, wheel);
+            if (gameplay)
+                SetKeyboardMoveScale(kWheelMoveLevels[wheelLevel]);
+            RuntimeLog("[input] wheel move speed %d/%d\n", wheelLevel + 1, int(std::size(kWheelMoveLevels)));
         }
         else if (mouse.mouseLook && wheel)
             g.wButtons |= wheel > 0 ? XINPUT_GAMEPAD_DPAD_UP : XINPUT_GAMEPAD_DPAD_DOWN;
@@ -342,9 +365,9 @@ SCDA_IMPORT(XamInputGetState)
     // SCDA_TRACE_INPUT=1: every poll (frame, host thread, mouse delta, foreground, sticks/buttons).
     static const bool trace = getenv("SCDA_TRACE_INPUT") != nullptr;
     if (trace)
-        RuntimeLog("[input] frame %llu tid %lu dx %d dy %d wheel %d fg %d btn %04x rx %d ry %d lx %d ly %d\n",
+        RuntimeLog("[input] frame %llu tid %lu dx %d dy %d wheel %d fg %d btn %04x rx %d ry %d lx %d ly %d live %d\n",
             (unsigned long long)Frames().FramesEnded(), GetCurrentThreadId(), dx, dy, wheel, int(GameWindowFocused()),
-            g.wButtons, g.sThumbRX, g.sThumbRY, g.sThumbLX, g.sThumbLY);
+            g.wButtons, g.sThumbRX, g.sThumbRY, g.sThumbLX, g.sThumbLY, int(gameplay));
     // The packet number changes whenever the state does.
     static std::mutex m;
     static XINPUT_GAMEPAD last{};
