@@ -2622,8 +2622,18 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         {
             static const char kFacePs[] = "void main(bool f : SV_IsFrontFace, out float4 o0 : SV_Target0, out float4 o1 : SV_Target1,"
                 " out float4 o2 : SV_Target2, out float4 o3 : SV_Target3) { o0 = f ? float4(1, 0, 0, 1) : float4(0, 1, 0, 1); o1 = o2 = o3 = o0; }";
+            // SCDA_FACE_DEPTHCOLOR=<scale>: show the fragment depth instead (r = frac(z * scale), g = z * 100).
+            static const char kDepthPs[] = "void main(float4 p : SV_Position, out float4 o0 : SV_Target0, out float4 o1 : SV_Target1,"
+                " out float4 o2 : SV_Target2, out float4 o3 : SV_Target3) { o0 = float4(frac(p.z * SCALE), saturate(p.z * 100), 0, 1); o1 = o2 = o3 = o0; }";
             std::string error;
-            auto code = CompileHlsl(kFacePs, true, &error);
+            const char* depthScale = getenv("SCDA_FACE_DEPTHCOLOR");
+            std::string src = kFacePs;
+            if (depthScale)
+            {
+                src = kDepthPs;
+                src.replace(src.find("SCALE"), 5, depthScale);
+            }
+            auto code = CompileHlsl(src, true, &error);
             if (code.empty() || FAILED(m_device->CreatePixelShader(code.data(), code.size(), nullptr, &facePs)))
                 RuntimeLog("[face] shader: %s\n", error.c_str());
             D3D11_RASTERIZER_DESC rd{};
