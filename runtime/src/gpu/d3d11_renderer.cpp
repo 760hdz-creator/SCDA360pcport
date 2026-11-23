@@ -2951,6 +2951,14 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
     else
         m_context->Draw(d.indexCount, autoOffset);
     m_lastDrawn++;
+    // SCDA_TRACE_QDRAWS=<first>:<last> (debug): presents in that range log each draw inside an active
+    // occlusion query (which geometry the query measures; cheap, keeps the frame timing).
+    static unsigned long long qdFirst = 0, qdLast = 0;
+    static const bool qdOn = getenv("SCDA_TRACE_QDRAWS") && sscanf(getenv("SCDA_TRACE_QDRAWS"), "%llu:%llu", &qdFirst, &qdLast) == 2;
+    if (qdOn && r.activeQuery && m_presented >= qdFirst && m_presented <= qdLast)
+        RuntimeLog("[qdraw] present %llu draw %u vs %016llx ps %016llx ib %08X n %u zctl %08X zinfo %08X surf %08X mask %08X\n",
+            (unsigned long long)m_presented, m_lastDrawn, (unsigned long long)d.vs->hash, d.ps ? (unsigned long long)d.ps->hash : 0ull,
+            d.indexBase, d.indexCount, r.regs[0x2200], r.regs[kRegRbDepthInfo], r.regs[kRegRbSurfaceInfo], r.regs[0x2104]);
     // SCDA_PIXEL_WATCH=<frame>,<x>,<y>: in that presented frame, after every draw, read RT0 at guest
     // window pixel (x, y) (window offset and MSAA/scale applied) and log the draw when it changed.
     static const char* watch = getenv("SCDA_PIXEL_WATCH");

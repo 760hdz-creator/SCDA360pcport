@@ -41,11 +41,21 @@ inline uint32_t BumpOcclusionGeneration(uint32_t address)
     std::lock_guard lock(OcclusionMutex());
     return ++OcclusionGenerations()[address & ~0x3Fu];
 }
-// Writes samples as the block's result; false (nothing written) when a newer query owns the block.
+// Writes samples as the block's result; false (nothing written) when a newer query owns the block
+// or this generation was already answered. A write closes its generation (bump): the title reads
+// the count, re-marks the block and reuses it before the CP reaches the new begin (Okhotsk: every
+// ~3 frames), so a second write for the same generation (the late-query fallback after the real
+// count, or the reverse) erased the new marker. The CP then took that end for a begin, the query
+// was lost and the title read 0: objects culled in alternate frames (#32).
 inline bool WriteOcclusionResult(uint32_t address, uint32_t generation, uint32_t samples)
 {
-    if (OcclusionGeneration(address) != generation)
-        return false;
+    {
+        std::lock_guard lock(OcclusionMutex());
+        uint32_t& current = OcclusionGenerations()[address & ~0x3Fu];
+        if (current != generation)
+            return false;
+        current++;
+    }
     const uint32_t le = __builtin_bswap32(samples); // GuestStore32 swaps again: little-endian in memory
     for (uint32_t off : { 4u, 8u, 12u, 24u, 28u })
         GuestStore32(address + off, 0);
