@@ -2244,6 +2244,69 @@ void D3D11Renderer::ExecuteDraw(const DrawCall& d, const Frame& frame)
         snprintf(buf, sizeof(buf), " vs %08llx z %08X wo %08X sc %08X/%08X part %d ps0 %g %g %g %g", (unsigned long long)(d.vs->hash >> 32), r.regs[0x2200], r.regs[0x2080], r.regs[0x2081], r.regs[0x2082], int(frame.partial),std::bit_cast<float>(r.regs[kRegAluConstants + 1024]), std::bit_cast<float>(r.regs[kRegAluConstants + 1025]), std::bit_cast<float>(r.regs[kRegAluConstants + 1026]), std::bit_cast<float>(r.regs[kRegAluConstants + 1027]));
         RuntimeLog("[watch] frame %llu present %llu draw %u n %u ib %08X consts %016llx%s%s\n", (unsigned long long)frame.stats.frame, m_presented,m_lastDrawn + m_lastSkipped, d.indexCount, d.indexBase, (unsigned long long)ch, s.c_str(), buf);
     }
+    // SCDA_TRACE_BOX=<vs hex> (with SCDA_TRACE_RESOLVE=<present>): draws with that VS log their
+    // vertices (float3 at fetch slot 95, from the frame's snapshots) projected by c8-c11 on the CPU.
+    static const uint64_t traceBoxVs = getenv("SCDA_TRACE_BOX") ? strtoull(getenv("SCDA_TRACE_BOX"), nullptr, 16) : 0;
+    if (traceBoxVs && d.vs->hash == traceBoxVs && TraceResolveFrame(m_presented))
+    {
+        const uint32_t base = r.regs[kRegFetchConstants + 190] & 0x1FFFFFFC;
+        const uint32_t offset = r.regs[0x2102];
+        auto load = [&](uint32_t addr, uint32_t& out)
+        {
+            for (uint32_t mi : d.memory)
+            {
+                if (mi >= frame.memory.size())
+                    continue;
+                const auto& sn = frame.memory[mi];
+                const uint32_t a = uint32_t(sn.key >> 32), n = uint32_t(sn.key);
+                if (addr >= a && addr + 4 <= a + n && addr + 4 - a <= sn.Bytes().size())
+                {
+                    memcpy(&out, &sn.Bytes()[addr - a], 4);
+                    out = _byteswap_ulong(out);
+                    return true;
+                }
+            }
+            return false;
+        };
+        float mn[3] = { 1e30f, 1e30f, 1e30f }, mx[3] = { -1e30f, -1e30f, -1e30f }, minW = 1e30f;
+        uint32_t got = 0;
+        for (uint32_t i = 0; i < d.indexCount && i < 64; i++)
+        {
+            uint32_t idx = i;
+            if (d.source != IndexSource::Auto && d.indexSnapshot >= 0 && size_t(d.indexSnapshot) < frame.memory.size())
+            {
+                const auto& ib = frame.memory[d.indexSnapshot];
+                const uint32_t ia = uint32_t(ib.key >> 32), off = d.indexBase - ia + i * (d.index32 ? 4 : 2);
+                if (off + (d.index32 ? 4 : 2) > ib.Bytes().size())
+                    break;
+                idx = d.index32 ? ((uint32_t(ib.Bytes()[off]) << 24) | (uint32_t(ib.Bytes()[off + 1]) << 16) | (uint32_t(ib.Bytes()[off + 2]) << 8) | ib.Bytes()[off + 3])
+                                : ((uint32_t(ib.Bytes()[off]) << 8) | ib.Bytes()[off + 1]);
+            }
+            idx += offset;
+            uint32_t w[3];
+            if (!load(base + idx * 12, w[0]) || !load(base + idx * 12 + 4, w[1]) || !load(base + idx * 12 + 8, w[2]))
+                continue;
+            const float p[4] = { std::bit_cast<float>(w[0]), std::bit_cast<float>(w[1]), std::bit_cast<float>(w[2]), 1.0f };
+            float c[4];
+            for (uint32_t row = 0; row < 4; row++)
+            {
+                c[row] = 0;
+                for (uint32_t k = 0; k < 4; k++)
+                    c[row] += p[k] * std::bit_cast<float>(r.regs[kRegAluConstants + (8 + row) * 4 + k]);
+            }
+            minW = std::min(minW, c[3]);
+            for (uint32_t k = 0; k < 3; k++)
+            {
+                const float v = c[3] != 0 ? c[k] / c[3] : 0;
+                mn[k] = std::min(mn[k], v);
+                mx[k] = std::max(mx[k], v);
+            }
+            got++;
+        }
+        RuntimeLog("[box] present %llu draw %u n %u prim %u src %d got %u ndc x %.3f..%.3f y %.3f..%.3f z %.6f..%.6f minw %.3f vport %g %g %g %g\n",
+            (unsigned long long)m_presented, m_lastDrawn + m_lastSkipped, d.indexCount, d.primType, int(d.source), got, mn[0], mx[0], mn[1], mx[1], mn[2], mx[2], minW,
+            std::bit_cast<float>(r.regs[0x210F]), std::bit_cast<float>(r.regs[0x2110]), std::bit_cast<float>(r.regs[0x2111]), std::bit_cast<float>(r.regs[0x2112]));
+    }
     if (TraceResolveFrame(m_presented))
     {
         // Texture slots the PS samples: s<n>_Texture*DescriptorIndex uses outside the #define header.
@@ -3001,9 +3064,12 @@ void D3D11Renderer::ExecuteQuery(const OcclusionQuery& q)
 {
     DrawResources& r = *m_draw;
     static const bool trace = getenv("SCDA_TRACE_QUERY") != nullptr;
+    static uint32_t drawsAtBegin = 0;
     if (trace)
-        RuntimeLog("[query] present %llu %s %08X gen %u (active %d, pending %zu)\n", (unsigned long long)m_presented, q.end ? "end" : "begin",
-            q.address, q.generation, r.activeQuery ? 1 : 0, r.pendingQueries.size());
+        RuntimeLog("[query] present %llu %s %08X gen %u (active %d, pending %zu) draws %u\n", (unsigned long long)m_presented, q.end ? "end" : "begin",
+            q.address, q.generation, r.activeQuery ? 1 : 0, r.pendingQueries.size(), m_lastDrawn - drawsAtBegin);
+    if (!q.end)
+        drawsAtBegin = m_lastDrawn;
     if (r.activeQuery)
     {
         m_context->End(r.activeQuery.Get());
