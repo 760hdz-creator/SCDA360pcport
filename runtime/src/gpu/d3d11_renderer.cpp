@@ -3078,6 +3078,10 @@ void D3D11Renderer::ExecuteQuery(const OcclusionQuery& q)
             q.address, q.generation, r.activeQuery ? 1 : 0, r.pendingQueries.size(), m_lastDrawn - drawsAtBegin);
     if (!q.end)
         drawsAtBegin = m_lastDrawn;
+    // A begin while a query is active = a lost end (#32 signature: its marker was gone at parse time).
+    static uint64_t lostEnds = 0;
+    if (!q.end && r.activeQuery && (++lostEnds <= 10 || lostEnds % 1000 == 0))
+        RuntimeLog("[query] begin %08X while active: lost end #%llu (present %llu)\n", q.address, (unsigned long long)lostEnds, (unsigned long long)m_presented);
     if (r.activeQuery)
     {
         m_context->End(r.activeQuery.Get());
@@ -3184,7 +3188,7 @@ void D3D11Renderer::PollQueries()
         Frames().QueryAnswered();
         if (trace)
             RuntimeLog("[query] present %llu block %08X gen %u: %llu host samples -> %u%s%s\n", (unsigned long long)m_presented, p.address,
-                p.generation, (unsigned long long)samples, guest, lost ? " (lost: fallback)" : "", written ? "" : " (older generation: dropped)");
+                p.generation, (unsigned long long)samples, guest, lost ? " (lost: fallback)" : "", written ? "" : " (older generation or already answered: dropped)");
         return true;
     });
     WritePendingFences();

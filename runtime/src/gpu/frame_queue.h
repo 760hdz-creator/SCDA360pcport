@@ -46,15 +46,17 @@ inline uint32_t BumpOcclusionGeneration(uint32_t address)
 // the count, re-marks the block and reuses it before the CP reaches the new begin (Okhotsk: every
 // ~3 frames), so a second write for the same generation (the late-query fallback after the real
 // count, or the reverse) erased the new marker. The CP then took that end for a begin, the query
-// was lost and the title read 0: objects culled in alternate frames (#32).
+// was lost and the title read 0: objects culled in alternate frames (#32). SCDA_QUERY_MULTIWRITE=1:
+// old behaviour (A/B).
 inline bool WriteOcclusionResult(uint32_t address, uint32_t generation, uint32_t samples)
 {
+    static const bool multiWrite = getenv("SCDA_QUERY_MULTIWRITE") != nullptr;
     {
         std::lock_guard lock(OcclusionMutex());
         uint32_t& current = OcclusionGenerations()[address & ~0x3Fu];
         if (current != generation)
             return false;
-        current++;
+        current += !multiWrite;
     }
     const uint32_t le = __builtin_bswap32(samples); // GuestStore32 swaps again: little-endian in memory
     for (uint32_t off : { 4u, 8u, 12u, 24u, 28u })
@@ -432,8 +434,8 @@ private:
     }
     void TouchEpochLocked() { m_epoch = (m_epoch | 1ull << 63) + (1ull << 32); }
     // Query latency cap: an end issued in guest frame F whose block still holds the title's marker
-    // when frame F+1 closes gets the fully-visible fallback now; the host result, when it lands for
-    // the same generation, overwrites it. The renderer can run 2-3 frames behind the CP (4K, Scale
+    // when frame F+1 closes gets the fully-visible fallback now; the host result, when it lands
+    // later, is dropped (the fallback answered that generation). The renderer can run 2-3 frames behind the CP (4K, Scale
     // 3); the title keeps a mesh hidden until a new count says visible, so meshes turning into view
     // flashed black for those frames (JBA HQ). A 360 GPU trails by about one frame. A late "visible"
     // only costs drawing something hidden. SCDA_QUERY_STRICT=1: wait for host results (old behaviour).
