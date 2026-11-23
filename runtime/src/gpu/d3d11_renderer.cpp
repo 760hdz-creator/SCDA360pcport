@@ -3161,7 +3161,16 @@ void D3D11Renderer::PollQueries()
         static const bool allVisible = getenv("SCDA_QUERY_ALL_VISIBLE") != nullptr; // A/B: every query fully visible
         // SCDA_QUERY_SCALE=<k> (debug): guest counts x k (sample-unit A/B).
         static const double qscale = getenv("SCDA_QUERY_SCALE") ? atof(getenv("SCDA_QUERY_SCALE")) : 1.0;
-        const uint32_t guest = lost || allVisible || g_debugQueriesVisible ? kOcclusionFallbackSamples
+        // SCDA_QUERY_VISIBLE_HI=<hex>[,..] (debug): blocks whose address >> 16 matches are always visible.
+        static const std::vector<uint32_t> visHi = []
+        {
+            std::vector<uint32_t> v;
+            for (const char* e = getenv("SCDA_QUERY_VISIBLE_HI"); e && *e; e += strcspn(e, ",") + (e[strcspn(e, ",")] ? 1 : 0))
+                v.push_back(uint32_t(strtoul(e, nullptr, 16)));
+            return v;
+        }();
+        const bool forceVis = std::find(visHi.begin(), visHi.end(), p.address >> 16) != visHi.end();
+        const uint32_t guest = lost || allVisible || forceVis || g_debugQueriesVisible ? kOcclusionFallbackSamples
             : uint32_t(std::min<double>(double(samples / std::max(p.samplesPerPixel, 1u)) * qscale, 0x7FFFFFFF));
         const bool written = Frames().VisibleWrite([&] { return WriteOcclusionResult(p.address, p.generation, guest); });
         Frames().QueryAnswered();
