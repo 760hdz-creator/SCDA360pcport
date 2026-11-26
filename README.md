@@ -16,8 +16,6 @@
 ![renderer](https://img.shields.io/badge/renderer-Direct3D%2011-informational)
 ![license](https://img.shields.io/badge/license-GPL--3.0-green)
 
-<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
-
 </div>
 
 > [!NOTE]
