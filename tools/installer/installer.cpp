@@ -51,14 +51,46 @@ static bool g_headless, g_ok, g_updating;
 static std::wstring g_error;
 static std::atomic<bool> g_cancel;
 
+// RecompLauncher (--prepare / --play): the game lives in the launcher's data folder, with no
+// registry record and no shortcuts; --prepare prints "progress 0.4 Text" lines on stdout.
+static bool g_portable, g_prepare;
+static int g_permille;
+static std::wstring g_lastStatus;
+
 struct Entry { std::wstring path; uint32_t sector, size; bool dir; };
+
+static void Out(const std::wstring& s)
+{
+    std::string u(WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0, nullptr, nullptr), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), u.data(), (int)u.size(), nullptr, nullptr);
+    DWORD w;
+    WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), u.data(), (DWORD)u.size(), &w, nullptr);
+}
 
 static void PostStatus(const std::wstring& s)
 {
-    if (g_headless)
+    if (g_prepare)
+    {
+        wchar_t p[32];
+        swprintf(p, 32, L"progress %.3f ", g_permille / 1000.0);
+        g_lastStatus = s;
+        Out(p + s + L"\n");
+    }
+    else if (g_headless)
         fwprintf(stdout, L"%ls\n", s.c_str());
     else
         PostMessageW(g_wnd, WM_APP_STATUS, 0, (LPARAM)new std::wstring(s));
+}
+
+static void PostProgress(int permille)
+{
+    if (!g_prepare)
+        PostMessageW(g_wnd, WM_APP_PROGRESS, (WPARAM)permille, 0);
+    else if (permille / 10 != g_permille / 10)
+    {
+        g_permille = permille;
+        PostStatus(g_lastStatus);
+    }
 }
 
 // ---- XDVDFS (ported from tools/pe_ppc_inspect.py) ----
@@ -221,8 +253,31 @@ static void MakeShortcut(const std::wstring& lnk, const std::wstring& target, co
 
 // ---- Existing install ----
 
+// RecompLauncher's data folder: version.txt, written last, says which build is set up there.
+static std::wstring ReadVersionFile(const std::wstring& dir)
+{
+    std::wstring v;
+    if (FILE* f = _wfopen((dir + L"\\version.txt").c_str(), L"r"))
+    {
+        char b[64] = "";
+        if (fgets(b, sizeof b, f))
+            for (char* c = b; *c && *c != '\r' && *c != '\n'; c++) v += wchar_t(*c);
+        fclose(f);
+    }
+    return v;
+}
+
 static void SaveInstallRecord(const std::wstring& dir)
 {
+    if (g_portable)
+    {
+        if (FILE* f = _wfopen((dir + L"\\version.txt").c_str(), L"w"))
+        {
+            fprintf(f, "%ls\n", kVersion);
+            fclose(f);
+        }
+        return;
+    }
     HKEY k;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, kRegKey, 0, nullptr, 0, KEY_WRITE, nullptr, &k, nullptr) != ERROR_SUCCESS)
         return;
@@ -364,7 +419,7 @@ static void Install(std::wstring iso, std::wstring dir, bool scDesktop, bool scS
                 return false;
             }
             off += n; left -= n; done += n;
-            PostMessageW(g_wnd, WM_APP_PROGRESS, (WPARAM)(total ? done * 950 / total : 0), 0);
+            PostProgress(int(total ? done * 950 / total : 0));
         }
         CloseHandle(o);
         return true;
@@ -405,7 +460,7 @@ static void Install(std::wstring iso, std::wstring dir, bool scDesktop, bool scS
     wroteFiles.push_back(game + L"\\SC4_Offline.xexhdr");
     if (!BuildImage(game))
         return fail(L"Failed building SC4_Offline.img from SC4_Offline.xex.");
-    PostMessageW(g_wnd, WM_APP_PROGRESS, 980, 0);
+    PostProgress(980);
 
     PostStatus(L"Installing scda.exe\x2026");
     std::wstring exe = dir + L"\\scda.exe";
@@ -429,7 +484,7 @@ static void Install(std::wstring iso, std::wstring dir, bool scDesktop, bool scS
     CoUninitialize();
 
     SaveInstallRecord(dir);
-    PostMessageW(g_wnd, WM_APP_PROGRESS, 1000, 0);
+    PostProgress(1000);
     g_ok = true;
     PostStatus(L"Done. Installed to " + dir + L"  (developer preview)");
     PostMessageW(g_wnd, WM_APP_DONE, 1, 0);
@@ -458,12 +513,12 @@ static void Update(std::wstring dir)
     CloseHandle(h);
 
     PostStatus(L"Checking the installed game data\x2026");
-    PostMessageW(g_wnd, WM_APP_PROGRESS, 100, 0);
+    PostProgress(100);
     if (Sha256File(dir + L"\\game\\SC4_Offline.img") != kExpectedImageSha256)
         return fail(L"The installed game data do not match this version. Choose Full reinstall instead.");
 
     PostStatus(L"Installing scda.exe\x2026");
-    PostMessageW(g_wnd, WM_APP_PROGRESS, 600, 0);
+    PostProgress(600);
     if (!WriteResource(IDR_SCDA_EXE, staged))
     {
         DeleteFileW(staged.c_str());
@@ -475,7 +530,7 @@ static void Update(std::wstring dir)
         return fail(L"Could not replace scda.exe (is the game running?).");
     }
     SaveInstallRecord(dir);
-    PostMessageW(g_wnd, WM_APP_PROGRESS, 1000, 0);
+    PostProgress(1000);
     g_ok = true;
     PostStatus(L"Done. Updated " + dir + L" to version " + kVersion);
     PostMessageW(g_wnd, WM_APP_DONE, 1, 0);
@@ -947,6 +1002,61 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+// ---- RecompLauncher ----
+
+// --prepare: sets the game up in dir from the disc image, without a window. A new release only
+// replaces scda.exe (the game data stay); then the disc is not needed.
+static int Prepare(const std::wstring& game, const std::wstring& dir)
+{
+    if (dir.empty()) { Out(L"--prepare needs --data <folder>\n"); return 2; }
+    g_portable = g_headless = g_prepare = true;
+    if (IsInstallDir(dir) && ReadVersionFile(dir) == kVersion)
+    {
+        Out(L"progress 1 Already set up\n");
+        return 0;
+    }
+    DeleteFileW((dir + L"\\version.txt").c_str()); // written again only when this run finishes
+    if (IsInstallDir(dir))
+        Update(dir);
+    if (!g_ok && !game.empty())
+        Install(game, dir, false, false);
+    else if (!g_ok && g_error.empty())
+        g_error = L"Pick your Splinter Cell: Double Agent disc image again on the game's page.";
+    if (!g_ok)
+        Out(g_error + L"\n");
+    return g_ok ? 0 : 1;
+}
+
+// --play: starts scda.exe in dir and waits for it, also when it starts itself again.
+static int Play(const std::wstring& dir)
+{
+    if (dir.empty() || !IsInstallDir(dir))
+        return 2;
+    SetEnvironmentVariableW(L"SCDA_NO_UPDATE_CHECK", L"1"); // RecompLauncher brings the updates
+    std::wstring exe = dir + L"\\scda.exe", cmd = L"\"" + exe + L"\"";
+    STARTUPINFOW si{ sizeof(si) };
+    PROCESS_INFORMATION pi;
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, dir.c_str(), &si, &pi))
+        return 1;
+    if (job) AssignProcessToJobObject(job, pi.hProcess);
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    DWORD code = 1;
+    for (HANDLE p = pi.hProcess; p;)
+    {
+        WaitForSingleObject(p, INFINITE);
+        GetExitCodeProcess(p, &code);
+        CloseHandle(p);
+        p = nullptr;
+        JOBOBJECT_BASIC_PROCESS_ID_LIST l{};
+        if (job && QueryInformationJobObject(job, JobObjectBasicProcessIdList, &l, sizeof(l), nullptr) && l.NumberOfProcessIdsInList)
+            p = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)l.ProcessIdList[0]);
+    }
+    if (job) CloseHandle(job);
+    return (int)code;
+}
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
 {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -955,20 +1065,30 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
     //           SCDA_Setup.exe --update [--dir <folder>]   (default: the recorded/shortcut install)
     //             [--wait-pid <pid>] first waits (60 s max) for that process (the game's in-game
     //             updater) to exit; [--relaunch] starts scda.exe again after a successful update.
+    // RecompLauncher: SCDA_Setup.exe --prepare --game=<image> --data=<folder>
+    //                 SCDA_Setup.exe --play --data=<folder>
     int argc;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::wstring iso, dir;
-    bool shortcut = true, update = false, relaunch = false;
+    std::wstring iso, dir, game, data;
+    bool shortcut = true, update = false, relaunch = false, prepare = false, play = false;
     DWORD waitPid = 0;
     for (int i = 1; i < argc; i++)
     {
-        if (!wcscmp(argv[i], L"--iso") && i + 1 < argc) iso = argv[++i];
+        if (!wcsncmp(argv[i], L"--game=", 7)) game = argv[i] + 7;
+        else if (!wcsncmp(argv[i], L"--data=", 7)) data = argv[i] + 7;
+        else if (!wcscmp(argv[i], L"--prepare")) prepare = true;
+        else if (!wcscmp(argv[i], L"--play")) play = true;
+        else if (!wcscmp(argv[i], L"--iso") && i + 1 < argc) iso = argv[++i];
         else if (!wcscmp(argv[i], L"--dir") && i + 1 < argc) dir = argv[++i];
         else if (!wcscmp(argv[i], L"--no-shortcut")) shortcut = false;
         else if (!wcscmp(argv[i], L"--update")) update = true;
         else if (!wcscmp(argv[i], L"--wait-pid") && i + 1 < argc) waitPid = wcstoul(argv[++i], nullptr, 10);
         else if (!wcscmp(argv[i], L"--relaunch")) relaunch = true;
     }
+    if (prepare) return Prepare(game, data);
+    if (play) return Play(data);
+    if (update && !dir.empty() && !ReadVersionFile(dir).empty())
+        g_portable = true; // the game's own updater in RecompLauncher's folder: no registry record
     if (update && waitPid)
         if (HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, waitPid))
         {
