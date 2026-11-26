@@ -297,6 +297,13 @@ know about the Xbox 360 hardware comes from the Xenia emulator project. Sound de
 [FFmpeg](https://ffmpeg.org). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The source code is licensed under
 **GPL-3.0** ([`LICENSE`](LICENSE)).
 
+## Support
+
+This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a
+tip on Ko-fi. Donations are completely optional and don't unlock anything.
+
+<a href="https://ko-fi.com/8gram_labs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
+
 ## Legal
 
 This is an unofficial fan project. It isn't made, approved or supported by Ubisoft or Microsoft. *Splinter Cell*,
