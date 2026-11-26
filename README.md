@@ -16,6 +16,10 @@
 ![renderer](https://img.shields.io/badge/renderer-Direct3D%2011-informational)
 ![license](https://img.shields.io/badge/license-GPL--3.0-green)
 
+This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a tip on Ko-fi. Donations are completely optional and don't unlock anything.
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/8gram_labs)
+
 </div>
 
 > [!NOTE]
@@ -296,13 +300,6 @@ with ideas from UnleashedRecomp, all by hedge-dev. A lot of what we
 know about the Xbox 360 hardware comes from the Xenia emulator project. Sound decoding uses
 [FFmpeg](https://ffmpeg.org). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). The source code is licensed under
 **GPL-3.0** ([`LICENSE`](LICENSE)).
-
-## Support
-
-This project is free, and it stays free. I work on it in my free time. If you'd like to support that, you can leave a
-tip on Ko-fi. Donations are completely optional and don't unlock anything.
-
-<a href="https://ko-fi.com/8gram_labs"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi"></a>
 
 ## Legal
 
