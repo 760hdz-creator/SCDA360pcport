@@ -1,0 +1,116 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "SCDA Recomp",
+  "inputs": [
+    {
+      "id": "game",
+      "role": "game",
+      "label": "Your disc image (.iso) of Splinter Cell: Double Agent for the Xbox 360 (the V1 disc, title 555307D7).",
+      "formats": [{ "type": "file", "extensions": ["iso"] }],
+      "check": { "xdvdfs": "SC4_Offline.xex" }
+    }
+  ],
+  "start": {
+    "program": ["SCDA_Setup.exe"],
+    "args": ["--play", "--data={data}"]
+  },
+  "prepare": {
+    "program": ["SCDA_Setup.exe"],
+    "args": ["--prepare", "--game={input:game}", "--data={data}"],
+    "label": "Copies the game from your disc (about 7 GB)",
+    "done": ["{data}/scda.exe", "{data}/game/SC4_Offline.img", "{data}/version.txt"],
+    "keeps_copy": true
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [{ "path": "{local}/SCDARecomp/settings.ini" }]
+    }
+  ],
+  "settings": [
+    {
+      "id": "mode", "label": "Window", "group": "Display",
+      "help": "Borderless covers the screen without changing its resolution.",
+      "choices": [
+        { "label": "Windowed", "set": { "Display/Mode": "windowed" } },
+        { "label": "Borderless", "set": { "Display/Mode": "borderless" } },
+        { "label": "Fullscreen", "set": { "Display/Mode": "fullscreen" } }
+      ],
+      "defaults": { "Display/Mode": "windowed" }
+    },
+    {
+      "id": "scale", "label": "Resolution", "group": "Display",
+      "help": "What the game draws at. 720p is the console's own; higher is sharper and needs a faster graphics card.",
+      "choices": [
+        { "label": "720p", "set": { "Display/Scale": "1" } },
+        { "label": "1440p", "set": { "Display/Scale": "2" } },
+        { "label": "2160p", "set": { "Display/Scale": "3" } },
+        { "label": "2880p", "set": { "Display/Scale": "4" } }
+      ],
+      "defaults": { "Display/Scale": "1" }
+    },
+    {
+      "id": "vsync", "label": "V-Sync", "group": "Display",
+      "help": "Waits for your screen's refresh, so the picture doesn't tear.",
+      "choices": [
+        { "label": "On", "set": { "Display/VSync": "1" } },
+        { "label": "Off", "set": { "Display/VSync": "0" } }
+      ],
+      "defaults": { "Display/VSync": "1" }
+    },
+    {
+      "id": "fov", "label": "Field of view", "group": "Display",
+      "help": "75 is the game's own.",
+      "slider": { "key": "Display/FOV", "min": 60, "max": 110, "step": 1, "format": "%.0f" },
+      "defaults": { "Display/FOV": "75" }
+    },
+    {
+      "id": "aa", "label": "Anti-aliasing", "group": "Graphics",
+      "help": "FXAA smooths the edges the game's own 4x MSAA leaves.",
+      "choices": [
+        { "label": "Off", "set": { "Display/AntiAliasing": "Off" } },
+        { "label": "FXAA", "set": { "Display/AntiAliasing": "FXAA" } }
+      ],
+      "defaults": { "Display/AntiAliasing": "Off" }
+    },
+    {
+      "id": "aniso", "label": "Texture filtering", "group": "Graphics",
+      "help": "Keeps floors and walls sharp at shallow angles.",
+      "choices": [
+        { "label": "Off", "set": { "Display/Anisotropy": "1" } },
+        { "label": "2x", "set": { "Display/Anisotropy": "2" } },
+        { "label": "4x", "set": { "Display/Anisotropy": "4" } },
+        { "label": "8x", "set": { "Display/Anisotropy": "8" } },
+        { "label": "16x", "set": { "Display/Anisotropy": "16" } }
+      ],
+      "defaults": { "Display/Anisotropy": "1" }
+    },
+    {
+      "id": "shadows", "label": "Dynamic shadows", "group": "Graphics",
+      "help": "Shadows cast by moving lights. The lights stay on either way.",
+      "choices": [
+        { "label": "On", "set": { "Display/DynamicShadows": "1" } },
+        { "label": "Off", "set": { "Display/DynamicShadows": "0" } }
+      ],
+      "defaults": { "Display/DynamicShadows": "1" }
+    }
+  ],
+  "folders": {
+    "game": [{ "path": "{data}" }],
+    "saves": [{ "path": "{local}/SCDARecomp/content" }],
+    "logs": [{ "path": "{data}" }]
+  },
+  "saves": ["{local}/SCDARecomp/content", "{local}/SCDARecomp/profile", "{local}/SCDARecomp/settings.ini"],
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your save games.", "open": "saves" },
+    { "id": "logs", "label": "Logs", "help": "The game's log (scda.log), for bug reports.", "open": "logs" }
+  ],
+  "exit_codes": {
+    "2": "The game isn't set up yet. Press Set Up Again on the game's page."
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "d3d11": "11.0" } }
+  }
+}
