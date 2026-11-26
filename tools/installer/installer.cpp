@@ -1016,10 +1016,17 @@ static int Prepare(const std::wstring& game, const std::wstring& dir)
         return 0;
     }
     DeleteFileW((dir + L"\\version.txt").c_str()); // written again only when this run finishes
-    if (IsInstallDir(dir))
+    const bool installed = IsInstallDir(dir);
+    if (installed)
         Update(dir);
-    if (!g_ok && !game.empty())
+    // A full install only where there is none yet, or over game data of another version: over a
+    // running game (a locked file) it would fail and take back every file it wrote, the game data too.
+    const bool reinstall = !installed || g_error.find(L"do not match") != std::wstring::npos;
+    if (!g_ok && reinstall && !game.empty())
+    {
+        g_error.clear();
         Install(game, dir, false, false);
+    }
     else if (!g_ok && g_error.empty())
         g_error = L"Pick your Splinter Cell: Double Agent disc image again on the game's page.";
     if (!g_ok)
