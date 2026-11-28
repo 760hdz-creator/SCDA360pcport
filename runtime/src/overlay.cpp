@@ -501,7 +501,7 @@ void AchievementsTab()
             {
                 mpHeader = true;
                 ImGui::Separator();
-                ImGui::TextDisabled("Multiplayer (not in this port)");
+                ImGui::TextDisabled("Multiplayer (not in this recomp)");
             }
             ImGui::PushID(a.id);
             const ImVec4 tint = a.unlockedAt ? ImVec4(1, 1, 1, 1) : ImVec4(0.35f, 0.35f, 0.35f, 1);

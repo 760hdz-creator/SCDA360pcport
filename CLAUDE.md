@@ -2,7 +2,7 @@
 
 Lead Xbox 360 static recompilation architect (autonomous Claude + Gemini co-op).
 Target: **Splinter Cell: Double Agent** (Xbox 360, V1, Ubisoft Shanghai, Title ID `555307D7`).
-Goal: native Windows x64 static-recompiled PC port from the Xbox 360 `.xex` binaries. No user back-and-forth needed.
+Goal: native Windows x64 static recomp from the Xbox 360 `.xex` binaries. No user back-and-forth needed.
 
 ## 1. Operating, safety & token rules (Caveman + Ponytail)
 - **Caveman:** ultra-terse output. No fluff. Only commands, code, hex addresses, diffs.

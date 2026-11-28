@@ -84,13 +84,13 @@ The game renders in SDR with its own console tonemapping. Real HDR output would 
 yet.
 
 ## #6 Achievements. Done in v0.1.11
-The game still sends its Xbox 360 achievement unlocks, and the port now catches them. Each unlock shows a popup
+The game still sends its Xbox 360 achievement unlocks, and the recomp now catches them. Each unlock shows a popup
 with the achievement's name, gamerscore and picture (all read from the disc) and is saved on your PC
-(`%LOCALAPPDATA%\SCDARecomp\profile\achievements.txt`). F1 / L3+R3 > Achievements lists the 21 single-player ones (600 G); the other 17 are multiplayer-only and the port has no multiplayer. Nothing is sent
+(`%LOCALAPPDATA%\SCDARecomp\profile\achievements.txt`). F1 / L3+R3 > Achievements lists the 21 single-player ones (600 G); the other 17 are multiplayer-only and the recomp has no multiplayer. Nothing is sent
 to Xbox Live.
 
 ## #8 Discord status toggle. Close (not applicable)
-There's no Discord integration in this port, so nothing is sent to Discord. If you see a status, it comes from
+There's no Discord integration in this recomp, so nothing is sent to Discord. If you see a status, it comes from
 Discord's own game detection (Discord > Settings > Activity Privacy).
 
 ## #22 Original vs fast loading. Close (not applicable)

@@ -1,4 +1,4 @@
-# SCDA Recomp: playable single-player port (design)
+# SCDA Recomp: playable single-player recomp (design)
 
 Date: 2026-10-27. Status: draft for approval (builder check done, user answers folded in).
 Project root: `C:\SCDA-Recomp`. Running state: `STATE.md`. Rules: `CLAUDE.md`.

@@ -160,7 +160,7 @@ void LoadLocked()
     g_table = ParseXdbfAchievements(g_xdbf.data(), g_xdbf.size(), GameLanguage());
     // The offline title's achievement manager (*0x82C92B04, ids at +0x44) holds 21 slots: ids 6-23,
     // 27, 29, 31 (SCDA_TRACE_ACH=1 logs them; 600 G). The rest (ranks, trophies, map experts) are
-    // multiplayer, which this port does not run.
+    // multiplayer, which this recomp does not run.
     for (Achievement& a : g_table)
         a.multiplayer = !((a.id >= 6 && a.id <= 23) || a.id == 27 || a.id == 29 || a.id == 31);
     if (FILE* f = fopen(StorePath().c_str(), "r"))

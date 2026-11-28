@@ -1,5 +1,5 @@
 // Update check (F1 menu, Update tab, and a notification at startup): the latest release of the
-// port's GitLab project and its copy on the 8gram Labs forge (git.8gramlabs.com), both asked, higher version wins (SCDA_UPDATE_REPO, group/name; [Update] Repo= in settings.ini overrides
+// recomp's GitLab project and its copy on the 8gram Labs forge (git.8gramlabs.com), both asked, higher version wins (SCDA_UPDATE_REPO, group/name; [Update] Repo= in settings.ini overrides
 // it), compared with this build's version (SCDA_VERSION). Only a strictly higher version counts as
 // an update. InstallUpdate downloads the release's SCDA_Setup.exe and runs its update mode.
 #pragma once
