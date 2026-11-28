@@ -16,10 +16,10 @@
 #define SCDA_VERSION "0.0.0"
 #endif
 #ifndef SCDA_UPDATE_FORGE_REPO
-#define SCDA_UPDATE_FORGE_REPO "8gramlabs/SCDA360pcport"
+#define SCDA_UPDATE_FORGE_REPO "8gramlabs/SCDA-Recomp"
 #endif
 #ifndef SCDA_UPDATE_REPO
-#define SCDA_UPDATE_REPO "octagram-labs-group/SCDA360pcport"
+#define SCDA_UPDATE_REPO "octagram-labs-group/SCDA-Recomp"
 #endif
 
 namespace updater {

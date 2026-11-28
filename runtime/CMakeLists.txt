@@ -28,8 +28,8 @@ else()
 endif()
 
 # This build's version (F1 menu > Update compares it with the latest GitLab release of SCDA_UPDATE_REPO).
-set(SCDA_UPDATE_REPO "octagram-labs-group/SCDA360pcport" CACHE STRING "GitLab group/name the update check asks" FORCE)
-set(SCDA_UPDATE_FORGE_REPO "8gramlabs/SCDA360pcport" CACHE STRING "git.8gramlabs.com owner/name the update check also asks (empty = none)")
+set(SCDA_UPDATE_REPO "octagram-labs-group/SCDA-Recomp" CACHE STRING "GitLab group/name the update check asks" FORCE)
+set(SCDA_UPDATE_FORGE_REPO "8gramlabs/SCDA-Recomp" CACHE STRING "git.8gramlabs.com owner/name the update check also asks (empty = none)")
 
 # SDL3 (zlib): native PlayStation / Switch / other gamepads (src/pad.cpp), linked static so an
 # update that replaces scda.exe alone carries it. Source: external/SDL (github.com/libsdl-org/SDL
